@@ -1,12 +1,14 @@
-دانلود:
-https://github.com/mohammad-mahdikhani/one-project/raw/cursor/accounting-ledger-56dd/Daftarchi-Windows.zip
+فایل نصبی فروش:
 
-نصب لازم نیست.
-1) zip را Extract کنید (روی خود zip دوبار کلیک نکنید و از داخل zip اجرا نکنید)
-2) بروید داخل پوشه Extract شده
-3) روی Start-Daftarchi.bat دوبار کلیک کنید
-4) مرورگر: http://127.0.0.1:8080
-5) ورود: 09120000000 / daftarchi
+https://github.com/mohammad-mahdikhani/one-project/raw/cursor/accounting-ledger-56dd/Daftarchi-Setup.exe
 
-اگر باز نشد، فایل %TEMP%\daftarchi-check.txt را بفرستید.
-ویندوز ۶۴بیتی لازم است.
+روی Daftarchi-Setup.exe دوبار کلیک کنید.
+ویزارد فارسی نصب باز می‌شود.
+بعد از نصب، آیکن «دفترچی» روی دسکتاپ است.
+با باز کردن آن، برنامه در مرورگر می‌آید.
+
+ورود اولیه: 09120000000 / daftarchi
+آدرس: http://127.0.0.1:8080
+
+حذف برنامه از منوی استارت، «حذف دفترچی»، یا از تنظیمات ویندوز.
+اطلاعات فروشگاه در پوشه نصب می‌ماند.
