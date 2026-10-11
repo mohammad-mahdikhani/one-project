@@ -476,7 +476,7 @@ function licensesHtml() {
       <div class="grid-2"><div class="field"><label>تخفیف</label><input name="discount_value" value="0"></div><div class="field"><label>نوع تخفیف</label><select name="discount_type"><option value="amount">مبلغ</option><option value="percent">درصد</option></select></div></div>
       <div class="field"><label>پرداخت</label><select name="payment_method"><option value="cash">نقد</option><option value="card">کارت</option><option value="gateway">درگاه وب‌بیکری</option></select></div>
       <button class="btn primary" type="submit">ثبت لایسنس</button>
-      <p class="hint">درگاه وب‌بیکری با مرچنت کد زرین‌پال سایت webakery.ir لینک پرداخت می‌سازد. اگر مرچنت خالی باشد و کلید ووکامرس پر باشد، خریدار به صفحه پرداخت همان سایت می‌رود.</p></form>
+      <p class="hint">پرداخت آنلاین لایسنس از درگاه زیبال وب‌بیکری انجام می‌شود و بعد از تأیید، لایسنس فعال می‌شود.</p></form>
       <details><summary>قیمت‌ها و ظرفیت پنجاه‌ساله</summary><form data-act="save-prices"><div class="grid-2">
         ${[["price_3m", "سه ماهه"], ["price_6m", "شش ماهه"], ["price_12m", "یک ساله"], ["price_50y", "پنجاه ساله"], ["cap_50y", "ظرفیت پنجاه ساله"]].map(([key, label]) => {
           const plan = data.plans.find((item) => item.id === { price_3m: "3m", price_6m: "6m", price_12m: "12m", price_50y: "50y" }[key]);
@@ -536,9 +536,9 @@ function settingsHtml() {
     </section>
     <section class="card"><h2 class="section-title">درگاه پرداخت</h2>
       <div class="field"><label>درگاه</label><select name="gateway">${options([["zarinpal", "زرین‌پال"], ["idpay", "آی‌دی‌پی"], ["zibal", "زیبال"]], s.gateway)}</select></div>
-      ${field("gateway_merchant", "مرچنت کد وب‌بیکری")}${field("gateway_callback", "آدرس بازگشت")}
-      <label class="check"><input type="checkbox" name="gateway_sandbox" ${checked("gateway_sandbox")}>حالت آزمایشی زرین‌پال</label>
-      <p class="hint">مرچنت کد همان شناسه پذیرنده درگاه webakery.ir است. مبلغ تومان است و برای درگاه به ریال تبدیل می‌شود. اگر آزمایشی روشن باشد و مرچنت خالی باشد، درخواست به سندباکس زرین‌پال می‌رود. بازگشت پیش‌فرض خود سایت است.</p>
+      ${field("license_merchant", "مرچنت زیبال لایسنس")}${field("gateway_merchant", "مرچنت فروش کالا")}${field("gateway_callback", "آدرس بازگشت")}
+      <label class="check"><input type="checkbox" name="gateway_sandbox" ${checked("gateway_sandbox")}>حالت آزمایشی زرین‌پال برای فروش کالا</label>
+      <p class="hint">لایسنس همیشه با زیبال و مرچنت وب‌بیکری پرداخت می‌شود، حتی اگر درگاه فروش کالا چیز دیگری باشد. مبلغ تومان است و برای زیبال به ریال تبدیل می‌شود. بازگشت پیش‌فرض https://webakery.ir است.</p>
     </section>
     <section class="card"><h2 class="section-title">پیامک</h2>
       <div class="field"><label>سامانه</label><select name="sms_provider">${options([["internal", "فقط داخل دفترچی"], ["kavenegar", "کاوه‌نگار"], ["melipayamak", "ملی‌پیامک"]], s.sms_provider)}</select></div>
@@ -592,7 +592,7 @@ function modalHtml() {
   if (modal.type === "gateway") inner = `<h2 class="section-title">پرداخت درگاهی</h2><p>فاکتور ${num(modal.sale.id)} · ${money(modal.sale.payable)}</p>${modal.sale.pay_url ? `<p><a href="${esc(modal.sale.pay_url)}" target="_blank" rel="noopener">باز کردن صفحه درگاه</a></p>` : ""}<div class="row-actions"><button type="button" class="btn primary" data-act="verify-sale" data-id="${modal.sale.id}">استعلام تأیید</button><button type="button" class="btn danger" data-act="cancel-sale" data-id="${modal.sale.id}">لغو</button></div><form data-act="manual-gateway"><input type="hidden" name="id" value="${modal.sale.id}"><div class="field"><label>اگر در پنل درگاه پرداخت را دیدید، پیگیری را بنویسید</label><input name="ref" required></div><button class="btn" type="submit">ثبت دستی</button></form>`;
   if (modal.type === "license") {
     const lic = modal.license;
-    inner = `<h2 class="section-title">پرداخت لایسنس در وب‌بیکری</h2><p>${esc(lic.title)} · ${esc(lic.buyer_name)} · ${money(lic.payable)}</p>${lic.pay_url ? `<p><a href="${esc(lic.pay_url)}" target="_blank" rel="noopener">باز کردن صفحه پرداخت webakery.ir</a></p>` : ""}<div class="row-actions"><button type="button" class="btn primary" data-act="verify-license" data-id="${lic.id}">استعلام تأیید</button><button type="button" class="btn danger" data-act="cancel-license" data-id="${lic.id}">لغو</button></div><form data-act="manual-license"><input type="hidden" name="id" value="${lic.id}"><div class="field"><label>اگر در پنل درگاه پرداخت را دیدید، پیگیری را بنویسید</label><input name="ref" required></div><button class="btn" type="submit">ثبت دستی</button></form>`;
+    inner = `<h2 class="section-title">پرداخت لایسنس در زیبال</h2><p>${esc(lic.title)} · ${esc(lic.buyer_name)} · ${money(lic.payable)}</p>${lic.pay_url ? `<p><a href="${esc(lic.pay_url)}" target="_blank" rel="noopener">باز کردن صفحه زیبال</a></p>` : ""}<div class="row-actions"><button type="button" class="btn primary" data-act="verify-license" data-id="${lic.id}">استعلام تأیید</button><button type="button" class="btn danger" data-act="cancel-license" data-id="${lic.id}">لغو</button></div><form data-act="manual-license"><input type="hidden" name="id" value="${lic.id}"><div class="field"><label>اگر در پنل زیبال پرداخت را دیدید، پیگیری را بنویسید</label><input name="ref" required></div><button class="btn" type="submit">ثبت دستی</button></form>`;
   }
   if (modal.type === "receipt") {
     const sale = modal.sale;

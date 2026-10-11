@@ -65,6 +65,7 @@ DEFAULT_SETTINGS = {
     "gateway_merchant": "",
     "gateway_callback": "https://webakery.ir",
     "gateway_sandbox": "0",
+    "license_merchant": "6a331116da557b902563c32f",
     "sms_provider": "internal",
     "sms_api_key": "",
     "sms_sender": "",
@@ -88,6 +89,7 @@ POS_PROVIDERS = {"manual", "saman", "behpardakht", "parsian", "irankish", "sepeh
 GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
+ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
 SMS_PROVIDERS = {"internal", "kavenegar", "melipayamak"}
 BOOL_KEYS = {"gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock"}
 SYSTEM_ACCOUNTS = [
@@ -970,7 +972,10 @@ def gateway_request(settings: dict, sale_id: int, payable: int, phone: str, desc
             "mobile": phone or None,
         })
         if code >= 400 or not isinstance(body, dict) or body.get("result") not in (100, "100") or not body.get("trackId"):
-            raise AppError("زیبال درخواست را نپذیرفت", 502)
+            detail = ""
+            if isinstance(body, dict):
+                detail = str(body.get("message") or "").strip()
+            raise AppError(f"زیبال درخواست را نپذیرفت{(': ' + detail) if detail else ''}", 502)
         return str(body["trackId"]), f"https://gateway.zibal.ir/start/{body['trackId']}"
     raise AppError("درگاه ناشناخته است")
 
@@ -1004,8 +1009,9 @@ def gateway_verify(settings: dict, sale) -> str:
             raise AppError("پرداخت آی‌دی‌پی تأیید نشد", 502)
         return str(body.get("track_id") or ref)
     if gateway == "zibal":
+        track = int(ref) if str(ref).isdigit() else ref
         code, body = http_request("POST", "https://gateway.zibal.ir/v1/verify", {
-            "merchant": "zibal" if sandbox else merchant, "trackId": ref,
+            "merchant": "zibal" if sandbox else merchant, "trackId": track,
         })
         if not isinstance(body, dict) or body.get("result") not in (100, 201, "100", "201"):
             raise AppError("پرداخت زیبال تأیید نشد", 502)
@@ -1020,31 +1026,22 @@ def gateway_verify(settings: dict, sale) -> str:
     raise AppError("درگاه ناشناخته است")
 
 
+def license_gateway_settings(settings: dict) -> dict:
+    data = dict(settings)
+    merchant = (data.get("license_merchant") or "").strip() or ZIBAL_LICENSE_MERCHANT
+    data["gateway"] = "zibal"
+    data["gateway_merchant"] = merchant
+    data["gateway_sandbox"] = "0"
+    callback = (data.get("gateway_callback") or "").strip()
+    if not callback.startswith("http://") and not callback.startswith("https://"):
+        data["gateway_callback"] = WEBAKERY_URL
+    return data
+
+
 def webakery_payment(settings: dict, order_id: int, title: str, payable: int, buyer: str, phone: str) -> tuple[str, str, str]:
-    merchant = (settings.get("gateway_merchant") or "").strip()
-    sandbox = settings.get("gateway_sandbox") == "1"
     description = f"لایسنس {title} دفترچی — webakery.ir"
-    if merchant or sandbox:
-        ref, pay_url = gateway_request(settings, order_id, payable, phone, description)
-        return settings.get("gateway") or "zarinpal", ref, pay_url
-    if settings.get("wp_url") and settings.get("woo_key") and settings.get("woo_secret"):
-        require_woo(settings)
-        code, body = http_request("POST", woo_url(settings, "orders"), {
-            "status": "pending",
-            "set_paid": False,
-            "billing": {"first_name": buyer, "phone": phone},
-            "fee_lines": [{"name": description, "total": str(payable)}],
-            "meta_data": [{"key": "daftarchi_license", "value": str(order_id)}],
-        })
-        if code >= 400 or not isinstance(body, dict) or not body.get("id"):
-            raise AppError("وب‌بیکری سفارش لایسنس را نساخت", 502)
-        pay_url = body.get("payment_url") or ""
-        if not pay_url and body.get("order_key"):
-            pay_url = f"{clean_base(settings['wp_url'])}/checkout/order-pay/{body['id']}/?pay_for_order=true&key={body['order_key']}"
-        if not pay_url:
-            raise AppError("وب‌بیکری لینک پرداخت نداد", 502)
-        return "woocommerce", str(body["id"]), pay_url
-    raise AppError("مرچنت کد درگاه وب‌بیکری را در تنظیمات وارد کنید")
+    ref, pay_url = gateway_request(license_gateway_settings(settings), order_id, payable, phone, description)
+    return "zibal", ref, pay_url
 
 
 def woo_item(row) -> dict:
@@ -2491,6 +2488,8 @@ def confirm_license(license_id: int):
         if row["status"] != "pending":
             raise AppError("این لایسنس قابل تأیید نیست")
         settings = get_settings(conn)
+    if row["gateway"] != "woocommerce":
+        settings = license_gateway_settings(settings)
     if mode == "manual":
         ref = clean_text(payload.get("ref"), "پیگیری", 64)
         if len(ref) < 3:
@@ -2521,15 +2520,21 @@ def cancel_license(license_id: int):
 @app.get("/pay/return")
 def pay_return():
     authority = (request.args.get("Authority") or request.args.get("authority") or request.args.get("trackId") or request.args.get("id") or "").strip()
+    success = (request.args.get("success") or "").strip()
     status = (request.args.get("Status") or request.args.get("status") or "").strip().upper()
     if not authority:
         return pay_page("شناسه پرداخت نیامد", False), 400
-    if status and status not in {"OK", "100", "1", "SUCCESS"}:
+    failed = success == "0" or status in {"NOK", "NO", "FAILED", "3"}
+    if not failed and status and success != "1" and status not in {"OK", "100", "1", "2", "SUCCESS"}:
+        failed = True
+    if failed:
         return pay_page("پرداخت در وب‌بیکری انجام نشد یا لغو شد.", False)
     with connect() as conn:
         row = conn.execute("SELECT * FROM licenses WHERE gateway_ref=? AND status='pending'", (authority,)).fetchone()
         sale = None if row else conn.execute("SELECT * FROM sales WHERE gateway_ref=? AND status='pending'", (authority,)).fetchone()
         settings = get_settings(conn)
+        if row and row["gateway"] != "woocommerce":
+            settings = license_gateway_settings(settings)
     try:
         if row:
             ref = gateway_verify(settings, row)
