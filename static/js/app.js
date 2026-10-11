@@ -538,7 +538,7 @@ function settingsHtml() {
       <div class="field"><label>درگاه</label><select name="gateway">${options([["zarinpal", "زرین‌پال"], ["idpay", "آی‌دی‌پی"], ["zibal", "زیبال"]], s.gateway)}</select></div>
       ${field("license_merchant", "مرچنت زیبال لایسنس")}${field("gateway_merchant", "مرچنت فروش کالا")}${field("gateway_callback", "آدرس بازگشت")}
       <label class="check"><input type="checkbox" name="gateway_sandbox" ${checked("gateway_sandbox")}>حالت آزمایشی زرین‌پال برای فروش کالا</label>
-      <p class="hint">لایسنس همیشه با زیبال و مرچنت وب‌بیکری پرداخت می‌شود، حتی اگر درگاه فروش کالا چیز دیگری باشد. مبلغ تومان است و برای زیبال به ریال تبدیل می‌شود. بازگشت پیش‌فرض https://webakery.ir است.</p>
+      <p class="hint">درگاه پیش‌فرض زیبال است. فروش کالا و لایسنس با مرچنت وب‌بیکری پرداخت می‌شوند. مبلغ تومان است و برای زیبال به ریال تبدیل می‌شود. بازگشت پیش‌فرض https://webakery.ir است.</p>
     </section>
     <section class="card"><h2 class="section-title">پیامک</h2>
       <div class="field"><label>سامانه</label><select name="sms_provider">${options([["internal", "فقط داخل دفترچی"], ["kavenegar", "کاوه‌نگار"], ["melipayamak", "ملی‌پیامک"]], s.sms_provider)}</select></div>

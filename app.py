@@ -61,8 +61,8 @@ DEFAULT_SETTINGS = {
     "pos_host": "",
     "pos_port": "1362",
     "pos_terminal": "",
-    "gateway": "zarinpal",
-    "gateway_merchant": "",
+    "gateway": "zibal",
+    "gateway_merchant": "6a331116da557b902563c32f",
     "gateway_callback": "https://webakery.ir",
     "gateway_sandbox": "0",
     "license_merchant": "6a331116da557b902563c32f",
@@ -964,7 +964,7 @@ def gateway_request(settings: dict, sale_id: int, payable: int, phone: str, desc
         return str(body["id"]), body["link"]
     if gateway == "zibal":
         code, body = http_request("POST", "https://gateway.zibal.ir/v1/request", {
-            "merchant": "zibal" if sandbox else merchant,
+            "merchant": zibal_merchant_id(merchant, sandbox),
             "amount": amount,
             "callbackUrl": callback,
             "description": description,
@@ -1012,7 +1012,7 @@ def gateway_verify(settings: dict, sale) -> str:
     if gateway == "zibal":
         track = int(ref) if str(ref).isdigit() else ref
         code, body = http_request("POST", "https://gateway.zibal.ir/v1/verify", {
-            "merchant": "zibal" if sandbox else merchant, "trackId": track,
+            "merchant": zibal_merchant_id(merchant, sandbox), "trackId": track,
         })
         if not isinstance(body, dict) or body.get("result") not in (100, 201, "100", "201"):
             raise AppError("پرداخت زیبال تأیید نشد", 502)
@@ -1025,6 +1025,14 @@ def gateway_verify(settings: dict, sale) -> str:
             raise AppError("پرداخت در وب‌بیکری هنوز تأیید نشده است", 502)
         return str(body.get("transaction_id") or ref)
     raise AppError("درگاه ناشناخته است")
+
+
+def zibal_merchant_id(merchant: str, sandbox: bool) -> str:
+    if merchant and merchant != SANDBOX_MERCHANT:
+        return merchant
+    if sandbox:
+        return "zibal"
+    return merchant
 
 
 def license_gateway_settings(settings: dict) -> dict:
@@ -1306,10 +1314,15 @@ def init_db():
                 )
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?,?)", (key, value))
-        for key in ("wp_url", "gateway_callback"):
+        for key in ("wp_url", "gateway_callback", "gateway_merchant", "license_merchant"):
             row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
             if row and not str(row["value"] or "").strip():
                 conn.execute("UPDATE settings SET value=? WHERE key=?", (DEFAULT_SETTINGS[key], key))
+        merchant_row = conn.execute("SELECT value FROM settings WHERE key='gateway_merchant'").fetchone()
+        gateway_row = conn.execute("SELECT value FROM settings WHERE key='gateway'").fetchone()
+        if merchant_row and merchant_row["value"] == ZIBAL_LICENSE_MERCHANT and gateway_row and gateway_row["value"] != "zibal":
+            conn.execute("UPDATE settings SET value='zibal' WHERE key='gateway'")
+            conn.execute("UPDATE settings SET value='0' WHERE key='gateway_sandbox'")
         have = {row["name"] for row in conn.execute("PRAGMA table_info(licenses)")}
         if "status" not in have:
             conn.execute("ALTER TABLE licenses ADD COLUMN status TEXT NOT NULL DEFAULT 'paid'")
