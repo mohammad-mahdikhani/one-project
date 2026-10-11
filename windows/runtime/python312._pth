@@ -1,5 +1,4 @@
 python312.zip
 .
-
-# Uncomment to run site.main() automatically
+Lib\site-packages
 import site

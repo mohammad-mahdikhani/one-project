@@ -7,10 +7,12 @@ import socket
 import sys
 import threading
 import time
+import traceback
 import webbrowser
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
+HERE = Path(__file__).resolve().parent
+ROOT = HERE.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
@@ -35,20 +37,30 @@ def open_browser(url: str):
 def main():
     port = int(os.environ.get("PORT", "8080"))
     url = f"http://127.0.0.1:{port}"
-    if port_open("127.0.0.1", port):
-        print(f"دفترچی از قبل روی {url} باز است.")
-        webbrowser.open(url)
-        return
+    log = Path(os.environ.get("TEMP", str(HERE))) / "daftarchi-run.log"
+    try:
+        if port_open("127.0.0.1", port):
+            print(f"Daftarchi already running at {url}")
+            webbrowser.open(url)
+            return
 
-    import app as appmod
+        import app as appmod
 
-    threading.Thread(target=open_browser, args=(url,), daemon=True).start()
-    print("دفترچی بدون نیاز به اینترنت روی این سیستم اجرا می‌شود.")
-    print(f"آدرس: {url}")
-    print("برای توقف، این پنجره را ببندید.")
-    print("فروش، انبار، حسابداری، صندوق و لایسنس نقد/کارت آفلاین کار می‌کنند.")
-    print("درگاه زیبال، ووکامرس و پیامک اینترنتی فقط وقتی نت وصل باشد کار می‌کنند.")
-    appmod.main()
+        threading.Thread(target=open_browser, args=(url,), daemon=True).start()
+        print("Daftarchi offline mode")
+        print(f"URL: {url}")
+        print("Login: 09120000000 / daftarchi")
+        print("Close this window to stop.")
+        appmod.main()
+    except Exception:
+        text = traceback.format_exc()
+        try:
+            log.write_text(text, encoding="utf-8")
+        except Exception:
+            pass
+        print(text)
+        print(f"Log saved: {log}")
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -1,9 +1,12 @@
-دانلود فایل نصبی ویندوز:
-
+دانلود:
 https://github.com/mohammad-mahdikhani/one-project/raw/cursor/accounting-ledger-56dd/Daftarchi-Windows.zip
 
-بعد از دانلود:
-1) فایل را باز (Extract) کنید
-2) روی Start-Daftarchi.bat دوبار کلیک کنید
-3) بروید به http://127.0.0.1:8080
-4) ورود: 09120000000 / daftarchi
+نصب لازم نیست.
+1) zip را Extract کنید (روی خود zip دوبار کلیک نکنید و از داخل zip اجرا نکنید)
+2) بروید داخل پوشه Extract شده
+3) روی Start-Daftarchi.bat دوبار کلیک کنید
+4) مرورگر: http://127.0.0.1:8080
+5) ورود: 09120000000 / daftarchi
+
+اگر باز نشد، فایل %TEMP%\daftarchi-check.txt را بفرستید.
+ویندوز ۶۴بیتی لازم است.
