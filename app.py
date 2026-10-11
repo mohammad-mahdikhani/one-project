@@ -30,7 +30,19 @@ from flask import Flask, abort, jsonify, request, send_file, send_from_directory
 from openpyxl import Workbook, load_workbook
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
-TEHRAN = ZoneInfo("Asia/Tehran")
+def _tehran_zone():
+    try:
+        return ZoneInfo("Asia/Tehran")
+    except Exception:
+        try:
+            import tzdata  # noqa: F401
+            return ZoneInfo("Asia/Tehran")
+        except Exception:
+            from datetime import timezone, timedelta
+            return timezone(timedelta(hours=3, minutes=30))
+
+
+TEHRAN = _tehran_zone()
 DATA = Path(os.environ.get("DAFTARCHI_DATA", Path(__file__).resolve().parent / "data"))
 UPLOAD = DATA / "uploads"
 DB_PATH = DATA / "daftarchi.db"

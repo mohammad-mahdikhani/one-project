@@ -3,3 +3,4 @@ openpyxl>=3.1.2
 jdatetime>=5.0.0
 waitress>=3.0.0
 colorama>=0.4.6
+tzdata>=2024.1
