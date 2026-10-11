@@ -972,9 +972,10 @@ def gateway_request(settings: dict, sale_id: int, payable: int, phone: str, desc
             "mobile": phone or None,
         })
         if code >= 400 or not isinstance(body, dict) or body.get("result") not in (100, "100") or not body.get("trackId"):
-            detail = ""
-            if isinstance(body, dict):
-                detail = str(body.get("message") or "").strip()
+            detail = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
+            if "invalid ip" in detail.lower():
+                ip = detail.split()[-1]
+                raise AppError(f"زیبال مرچنت را شناخت، ولی آی‌پی سرور مجاز نیست: {ip}. این آی‌پی را در پنل زیبال برای مرچنت آزاد کنید.", 502)
             raise AppError(f"زیبال درخواست را نپذیرفت{(': ' + detail) if detail else ''}", 502)
         return str(body["trackId"]), f"https://gateway.zibal.ir/start/{body['trackId']}"
     raise AppError("درگاه ناشناخته است")

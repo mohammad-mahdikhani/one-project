@@ -327,6 +327,21 @@ class DaftarchiTest(unittest.TestCase):
             site = self.client.post("/api/settings/test/wp")
             self.assertEqual(site.status_code, 200, site.get_json())
             self.assertIn("وردپرس", site.get_json()["message"])
+
+            def rejected(method, url, payload=None, headers=None, form=None, timeout=12):
+                if url.endswith("/v1/request"):
+                    return 200, {"result": 115, "message": "invalid IP 203.0.113.8"}
+                return 200, []
+
+            appmod.http_request = rejected
+            denied = self.client.post("/api/licenses", json={
+                "plan": "6m", "buyer_name": "بدون آی‌پی", "phone": "09120001111", "payment_method": "gateway",
+            })
+            self.assertEqual(denied.status_code, 502)
+            self.assertIn("203.0.113.8", denied.get_json()["error"])
+            self.assertIn("پنل زیبال", denied.get_json()["error"])
+            rows = self.client.get("/api/licenses").get_json()["licenses"]
+            self.assertTrue(all(row["buyer_name"] != "بدون آی‌پی" or row["status"] == "canceled" for row in rows))
         finally:
             appmod.http_request = original
         self.assertTrue(calls)
