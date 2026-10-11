@@ -1,16 +1,9 @@
-فایل اجرای ویندوز اینجاست:
+دانلود فایل نصبی ویندوز:
 
-1) Start-Daftarchi.bat
-2) اجرای دفترچی.bat
-3) windows\اجرا.bat
-4) windows\نصب.bat
+https://github.com/mohammad-mahdikhani/one-project/raw/cursor/accounting-ledger-56dd/Daftarchi-Windows.zip
 
-آدرس در گیت‌هاب (برنچ PR):
-https://github.com/mohammad-mahdikhani/one-project/tree/cursor/accounting-ledger-56dd
-
-دانلود کل پروژه به‌صورت zip:
-https://github.com/mohammad-mahdikhani/one-project/archive/refs/heads/cursor/accounting-ledger-56dd.zip
-
-بعد از باز کردن zip، روی Start-Daftarchi.bat دوبار کلیک کنید.
-ورود: 09120000000 / daftarchi
-آدرس: http://127.0.0.1:8080
+بعد از دانلود:
+1) فایل را باز (Extract) کنید
+2) روی Start-Daftarchi.bat دوبار کلیک کنید
+3) بروید به http://127.0.0.1:8080
+4) ورود: 09120000000 / daftarchi
