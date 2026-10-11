@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import calendar
 import hashlib
 import html
@@ -812,7 +813,12 @@ def deliver_email(conn, settings: dict, recipient: str, subject: str, text: str)
             with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as smtp:
                 smtp.ehlo()
                 smtp.starttls()
-                smtp.login(sender, secret)
+                smtp.ehlo()
+                token = base64.b64encode(f"\0{sender}\0{secret}".encode()).decode()
+                code, resp = smtp.docmd("AUTH", f"PLAIN {token}")
+                if code != 235:
+                    text = resp.decode(errors="replace") if isinstance(resp, bytes) else str(resp)
+                    raise RuntimeError(f"{code} {text}")
                 smtp.send_message(msg)
             status, detail = "sent", "جیمیل"
         except Exception as exc:
@@ -845,11 +851,11 @@ def explain_gmail(detail: str) -> str:
         )
     if "535" in low or "badcredentials" in low or "username and password not accepted" in low:
         return (
-            "جیمیل رمز را نپذیرفت. در حساب گوگل یک App Password بسازید و همان را، بدون فاصله، در تنظیمات دفترچی بگذارید. "
-            "رمز ورود خود جیمیل اینجا کار نمی‌کند."
+            "جیمیل رمز را نپذیرفت. رمز ورود معمولی کار نمی‌کند. در حساب گوگل یک App Password بسازید "
+            "و همان ۱۶ حرف را در خانه «رمز برنامه جیمیل» بنویسید."
         )
-    if "timed out" in low or "timeout" in low:
-        return "ارتباط با سرور جیمیل برقرار نشد. اینترنت را بررسی کنید و دوباره کد بفرستید."
+    if "timed out" in low or "timeout" in low or "unexpectedly closed" in low or "connection reset" in low:
+        return "ارتباط با جیمیل قطع شد. اینترنت را بررسی کنید. اگر رمز را نوشته‌اید، باید رمز برنامه باشد نه رمز ورود جیمیل."
     return f"ارسال کد به جیمیل ناموفق بود: {text[:180]}"
 
 
@@ -1510,10 +1516,12 @@ def update_info():
 @app.get("/api/auth/bootstrap")
 def bootstrap():
     with connect() as conn:
-        flag = get_settings(conn).get("must_change_password") == "1"
+        settings = get_settings(conn)
+        flag = settings.get("must_change_password") == "1"
+        ready = smtp_ready(settings)
     if flag:
-        return jsonify(initial=True, phone=INITIAL_PHONE, password=INITIAL_PASSWORD)
-    return jsonify(initial=False)
+        return jsonify(initial=True, phone=INITIAL_PHONE, password=INITIAL_PASSWORD, smtp_ready=ready)
+    return jsonify(initial=False, smtp_ready=ready)
 
 
 @app.post("/api/auth/login")
@@ -1525,8 +1533,7 @@ def login():
         row = find_user(conn, ident)
         if not row or not check_pw(password, row["password_hash"]):
             raise AppError("شماره یا رمز نادرست است", 401)
-        unverified = row["email"] and not int(row["email_verified"] or 0)
-        if unverified and ("@" in ident or row["role"] != "admin"):
+        if row["email"] and not int(row["email_verified"] or 0):
             raise AppError(
                 "این حساب هنوز با جیمیل تأیید نشده. کد شش‌رقمی را وارد کنید.",
                 403,
@@ -1548,17 +1555,33 @@ def register():
     phone = norm_phone(payload.get("phone") or "")
     email = gmail_address(payload.get("email") or payload.get("gmail"))
     password = str(payload.get("password") or "")
+    app_password = str(payload.get("app_password") or "").replace(" ", "").strip()
     if not re.fullmatch(r"09\d{9}", phone):
         raise AppError("شماره موبایل معتبر نیست")
     if len(password) < 6 or len(password) > 100:
         raise AppError("رمز باید حداقل ۶ حرف باشد")
     with connect() as conn:
+        settings = get_settings(conn)
         phone_owner = conn.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
         existing = conn.execute("SELECT * FROM users WHERE lower(email)=?", (email,)).fetchone()
         if phone_owner and (not existing or phone_owner["id"] != existing["id"]):
             raise AppError("این شماره قبلاً ثبت شده")
         if existing and int(existing["email_verified"] or 0):
             raise AppError("این جیمیل قبلاً ثبت شده. وارد شوید یا رمز را بازیابی کنید.")
+        if not smtp_ready(settings):
+            if len(app_password) < 8:
+                raise AppError(
+                    "رمز برنامه جیمیل لازم است. زیر رمز حساب، رمز برنامه (App Password) همان جیمیل را بنویسید. رمز ورود معمولی جیمیل قبول نیست."
+                )
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('smtp_user', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (email,),
+            )
+            conn.execute(
+                "INSERT INTO settings (key, value) VALUES ('smtp_password', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (app_password,),
+            )
+            settings = get_settings(conn)
         if existing:
             conn.execute(
                 "UPDATE users SET name=?, phone=?, password_hash=?, email_verified=0 WHERE id=?",
@@ -1566,13 +1589,15 @@ def register():
             )
             user_id = existing["id"]
         else:
+            others = conn.execute("SELECT COUNT(*) AS c FROM users WHERE phone<>?", (INITIAL_PHONE,)).fetchone()["c"]
+            role = "admin" if settings.get("must_change_password") == "1" and others == 0 else "cashier"
             cur = conn.execute(
                 """INSERT INTO users (name, phone, email, password_hash, role, email_verified, created_at)
                    VALUES (?,?,?,?,?,0,?)""",
-                (name, phone, email, hash_pw(password), "cashier", iso()),
+                (name, phone, email, hash_pw(password), role, iso()),
             )
             user_id = cur.lastrowid
-        send_gmail_code(conn, get_settings(conn), email, user_id, "verify")
+        send_gmail_code(conn, settings, email, user_id, "verify")
     return jsonify(ok=True, email=email, delivery="email")
 
 
@@ -1598,6 +1623,8 @@ def verify_email():
             raise AppError("کد نادرست یا منقضی است")
         conn.execute("UPDATE password_resets SET used=1 WHERE id=?", (row["id"],))
         conn.execute("UPDATE users SET email_verified=1 WHERE id=?", (user["id"],))
+        fresh = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+        clear_initial_secret(conn, fresh)
     return jsonify(ok=True)
 
 

@@ -24,6 +24,8 @@ const state = {
   recovery: null,
   pendingEmail: "",
   verifyNote: "",
+  authError: "",
+  authDraft: null,
   update: null,
   page: "dashboard",
   busy: false,
@@ -96,7 +98,7 @@ function toast(message) {
   el.textContent = message;
   el.classList.add("show");
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => el.classList.remove("show"), 3600);
+  toast.timer = setTimeout(() => el.classList.remove("show"), 8000);
 }
 async function api(path, { method = "GET", body, form } = {}) {
   const opts = { method, credentials: "same-origin" };
@@ -105,13 +107,25 @@ async function api(path, { method = "GET", body, form } = {}) {
     opts.headers = { "Content-Type": "application/json" };
     opts.body = JSON.stringify(body);
   }
-  const res = await fetch(path, opts);
-  const data = await res.json().catch(() => ({}));
+  let res;
+  try {
+    res = await fetch(path, opts);
+  } catch {
+    throw new Error("ارتباط با دفترچی قطع شد. اگر برنامه تازه نصب شده، آن را ببندید و دوباره باز کنید.");
+  }
+  const raw = await res.text();
+  let data = {};
+  if (raw) {
+    try { data = JSON.parse(raw); }
+    catch { data = { error: raw.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 180) }; }
+  }
+  if (!data || typeof data !== "object" || Array.isArray(data)) data = {};
   if (!res.ok) {
-    const err = new Error(data.error || (res.status === 401 ? "وارد نشده‌اید" : "خطا"));
+    const message = data.error || (res.status === 401 ? "وارد نشده‌اید" : `درخواست انجام نشد (${res.status})`);
+    const err = new Error(message);
     err.status = res.status;
     err.data = data;
-    if (res.status === 401) {
+    if (res.status === 401 && !String(path).includes("/api/auth/login")) {
       state.user = null;
       render();
     }
@@ -133,7 +147,14 @@ async function guard(fn) {
   if (state.busy) return;
   state.busy = true;
   try { await fn(); }
-  catch (err) { toast(err.message || "خطا"); }
+  catch (err) {
+    const message = err.message || "درخواست انجام نشد";
+    if (!state.user) {
+      state.authError = message;
+      render();
+    }
+    toast(message);
+  }
   finally { state.busy = false; }
 }
 
@@ -258,12 +279,18 @@ function updateBanner() {
     ${state.update.notes ? `<div class="hint">${esc(state.update.notes)}</div>` : ""}
   </div>`;
 }
+function authProblem() {
+  if (!state.authError) return "";
+  return `<p class="form-error">${esc(state.authError)}</p>`;
+}
 function authHtml() {
+  const draft = state.authDraft || {};
   if (state.authView === "verify") {
     return `<div class="auth"><form class="card auth-card" data-act="verify">
       <div class="brand"><div class="mark">${logo()}</div><div><strong>تأیید جیمیل</strong><span>دفترچی</span></div></div>
       <p class="hint">${esc(state.verifyNote || "کد شش‌رقمی به جیمیل فرستاده شد. صندوق ورودی و هرزنامه را ببینید.")}</p>
-      <div class="field"><label>جیمیل</label><input class="ltr" name="ident" value="${esc(state.pendingEmail || "")}" required></div>
+      ${authProblem()}
+      <div class="field"><label>جیمیل</label><input class="ltr" name="ident" value="${esc(state.pendingEmail || draft.ident || "")}" required></div>
       <div class="field"><label>کد ۶ رقمی</label><input class="ltr" name="code" inputmode="numeric" autocomplete="one-time-code" required></div>
       <button class="btn primary block" type="submit">تأیید حساب</button>
       <button class="btn block" type="button" data-act="resend-verify">ارسال دوباره کد</button>
@@ -273,11 +300,14 @@ function authHtml() {
   if (state.authView === "register") {
     return `<div class="auth"><form class="card auth-card" data-act="register">
       <div class="brand"><div class="mark">${logo()}</div><div><strong>ساخت حساب</strong><span>با جیمیل</span></div></div>
-      <p class="hint">بعد از ثبت، یک کد شش‌رقمی به همین جیمیل فرستاده می‌شود. تا کد را وارد نکنید ورود باز نمی‌شود.</p>
-      <div class="field"><label>نام</label><input name="name" required></div>
-      <div class="field"><label>موبایل</label><input class="ltr" name="phone" required placeholder="09..."></div>
-      <div class="field"><label>جیمیل</label><input class="ltr" name="email" type="email" required placeholder="name@gmail.com"></div>
-      <div class="field"><label>رمز</label><input type="password" name="password" minlength="6" required></div>
+      <p class="hint">کد شش‌رقمی به همین جیمیل فرستاده می‌شود. رمز برنامه را از حساب گوگل بسازید؛ رمز ورود جیمیل اینجا کار نمی‌کند.</p>
+      ${authProblem()}
+      <div class="field"><label>نام</label><input name="name" required value="${esc(draft.name || "")}"></div>
+      <div class="field"><label>موبایل</label><input class="ltr" name="phone" required placeholder="09..." value="${esc(draft.phone || "")}"></div>
+      <div class="field"><label>جیمیل</label><input class="ltr" name="email" type="email" required placeholder="name@gmail.com" value="${esc(draft.email || "")}"></div>
+      <div class="field"><label>رمز ورود به دفترچی</label><input type="password" name="password" minlength="6" required value="${esc(draft.password || "")}"></div>
+      <div class="field"><label>رمز برنامه جیمیل</label><input class="ltr" type="password" name="app_password" autocomplete="off" placeholder="App Password" value="${esc(draft.app_password || "")}"></div>
+      <p class="hint">${state.bootstrap?.smtp_ready ? "جیمیل فرستنده قبلاً ذخیره شده. اگر کد می‌رسد، رمز برنامه را خالی بگذارید." : "بدون رمز برنامه، جیمیل کد را نمی‌فرستد و حساب ساخته نمی‌شود."}</p>
       <button class="btn primary block" type="submit">ساخت حساب و دریافت کد</button>
       <button class="btn block" type="button" data-act="show-login">بازگشت</button>
     </form></div>`;
@@ -286,6 +316,7 @@ function authHtml() {
     const recovery = state.recovery || {};
     return `<div class="auth"><form class="card auth-card" data-act="reset">
       <div class="brand"><div class="mark">${logo()}</div><div><strong>بازیابی رمز</strong><span>دفترچی</span></div></div>
+      ${authProblem()}
       <p class="hint">${recovery.delivery === "internal" ? "سامانه بیرونی فعال نیست؛ کد داخل خود سیستم ساخته شد." : "کد ارسال شد."} ${esc(recovery.detail || "")}</p>
       ${recovery.code ? `<p><strong class="num">${esc(recovery.code)}</strong></p>` : ""}
       <input type="hidden" name="ident" value="${esc(recovery.ident || "")}">
@@ -298,7 +329,8 @@ function authHtml() {
   if (state.authView === "forgot") {
     return `<div class="auth"><form class="card auth-card" data-act="forgot">
       <div class="brand"><div class="mark">${logo()}</div><div><strong>فراموشی رمز</strong><span>با جیمیل یا موبایل</span></div></div>
-      <div class="field"><label>موبایل یا جیمیل</label><input name="ident" required></div>
+      ${authProblem()}
+      <div class="field"><label>موبایل یا جیمیل</label><input name="ident" required value="${esc(draft.ident || "")}"></div>
       <button class="btn primary block" type="submit">دریافت کد</button>
       <button class="btn block" type="button" data-act="show-login">بازگشت</button>
     </form></div>`;
@@ -308,8 +340,9 @@ function authHtml() {
     : "";
   return `<div class="auth"><form class="card auth-card" data-act="login">
     <div class="brand"><div class="mark">${logo()}</div><div><strong>دفترچی</strong><span>صندوق و حسابداری فروشگاه</span></div></div>
-    <div class="field"><label>موبایل یا جیمیل</label><input name="ident" autocomplete="username" required value="${state.bootstrap?.initial ? esc(state.bootstrap.phone) : ""}"></div>
-    <div class="field"><label>رمز</label><input type="password" name="password" autocomplete="current-password" required></div>
+    ${authProblem()}
+    <div class="field"><label>موبایل یا جیمیل</label><input name="ident" autocomplete="username" required value="${esc(draft.ident || (state.bootstrap?.initial ? state.bootstrap.phone : ""))}"></div>
+    <div class="field"><label>رمز</label><input type="password" name="password" autocomplete="current-password" required value="${esc(draft.password || "")}"></div>
     <button class="btn primary block" type="submit">ورود</button>
     <button class="btn block" type="button" data-act="show-register">ساخت حساب با جیمیل</button>
     <button class="btn block" type="button" data-act="show-forgot">رمز را فراموش کرده‌ام</button>
@@ -685,6 +718,7 @@ async function onSubmit(event) {
   event.preventDefault();
   const act = form.dataset.act;
   const data = Object.fromEntries(new FormData(form).entries());
+  if (!state.user) state.authDraft = data;
   await guard(async () => {
     if (act === "login") {
       try {
@@ -704,6 +738,7 @@ async function onSubmit(event) {
       }
     } else if (act === "register") {
       const result = await api("/api/auth/register", { method: "POST", body: data });
+      state.authError = "";
       state.pendingEmail = result.email;
       state.verifyNote = "کد شش‌رقمی به جیمیل فرستاده شد. صندوق ورودی و هرزنامه را ببینید.";
       state.authView = "verify";
@@ -887,9 +922,9 @@ async function onClick(event) {
   if (el.dataset.act === "stop") { event.stopPropagation(); return; }
   const act = el.dataset.act;
   if (act === "close-modal") { state.modal = null; render(); return; }
-  if (act === "show-forgot") { state.authView = "forgot"; render(); return; }
-  if (act === "show-register") { state.authView = "register"; render(); return; }
-  if (act === "show-login") { state.authView = "login"; render(); return; }
+  if (act === "show-forgot") { state.authView = "forgot"; state.authError = ""; render(); return; }
+  if (act === "show-register") { state.authView = "register"; state.authError = ""; render(); return; }
+  if (act === "show-login") { state.authView = "login"; state.authError = ""; render(); return; }
   if (act === "resend-verify") {
     await guard(async () => {
       await api("/api/auth/verify/resend", { method: "POST", body: { ident: state.pendingEmail || document.querySelector('[name="ident"]')?.value || "" } });

@@ -1,3 +1,4 @@
+import base64
 import io
 import os
 import tempfile
@@ -384,6 +385,13 @@ class DaftarchiTest(unittest.TestCase):
             def send_message(self, msg):
                 FakeSMTP.message = msg
 
+            def docmd(self, cmd, args=""):
+                if str(cmd).upper() == "AUTH":
+                    raw = base64.b64decode(str(args).split(" ", 1)[1])
+                    _empty, user, secret = raw.split(b"\0")
+                    self.login(user.decode(), secret.decode())
+                return 235, b"accepted"
+
             def __enter__(self):
                 return self
 
@@ -446,6 +454,86 @@ class DaftarchiTest(unittest.TestCase):
         finally:
             appmod.smtplib.SMTP = original
 
+    def test_signup_sends_from_the_gmail_app_password_on_the_form(self):
+        missing = self.client.post("/api/auth/register", json={
+            "name": "محمد", "phone": "09373211344", "email": "mhm.worker@gmail.com", "password": "secret1",
+        })
+        self.assertEqual(missing.status_code, 400, missing.get_json())
+        self.assertIn("رمز برنامه", missing.get_json()["error"])
+
+        class FakeSMTP:
+            def __init__(self, host, port, timeout=None):
+                self.host = host
+
+            def ehlo(self):
+                return None
+
+            def starttls(self):
+                return None
+
+            def login(self, user, secret):
+                FakeSMTP.user = user
+                FakeSMTP.secret = secret
+
+            def send_message(self, msg):
+                FakeSMTP.message = msg
+
+            def docmd(self, cmd, args=""):
+                if str(cmd).upper() == "AUTH":
+                    raw = base64.b64decode(str(args).split(" ", 1)[1])
+                    _empty, user, secret = raw.split(b"\0")
+                    self.login(user.decode(), secret.decode())
+                return 235, b"accepted"
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        original = appmod.smtplib.SMTP
+        appmod.smtplib.SMTP = FakeSMTP
+        try:
+            def reject(self, user, secret):
+                raise appmod.smtplib.SMTPAuthenticationError(535, b"Username and Password not accepted")
+
+            FakeSMTP.login = reject
+            denied = self.client.post("/api/auth/register", json={
+                "name": "محمد", "phone": "09373211344", "email": "mhm.worker@gmail.com",
+                "password": "secret1", "app_password": "abcd efgh ijkl mnop",
+            })
+            self.assertEqual(denied.status_code, 400, denied.get_json())
+            self.assertIn("App Password", denied.get_json()["error"])
+            settings = self.client.get("/api/settings").get_json()["settings"]
+            self.assertEqual(settings["smtp_user"], "")
+            phones = [row["phone"] for row in self.client.get("/api/users").get_json()["users"]]
+            self.assertNotIn("09373211344", phones)
+
+            def accept(self, user, secret):
+                FakeSMTP.user = user
+                FakeSMTP.secret = secret
+
+            FakeSMTP.login = accept
+            created = self.client.post("/api/auth/register", json={
+                "name": "محمد", "phone": "09373211344", "email": "mhm.worker@gmail.com",
+                "password": "secret1", "app_password": "abcd efgh ijkl mnop",
+            })
+            self.assertEqual(created.status_code, 200, created.get_json())
+            self.assertEqual(FakeSMTP.user, "mhm.worker@gmail.com")
+            self.assertEqual(FakeSMTP.secret, "abcdefghijklmnop")
+            self.assertEqual(FakeSMTP.message["To"], "mhm.worker@gmail.com")
+            settings = self.client.get("/api/settings").get_json()["settings"]
+            self.assertEqual(settings["smtp_user"], "mhm.worker@gmail.com")
+            user = next(row for row in self.client.get("/api/users").get_json()["users"] if row["phone"] == "09373211344")
+            self.assertEqual(user["role"], "admin")
+            self.assertEqual(user["email_verified"], 0)
+            self.client.post("/api/auth/logout")
+            blocked = self.client.post("/api/auth/login", json={"ident": "mhm.worker@gmail.com", "password": "secret1"})
+            self.assertEqual(blocked.status_code, 403, blocked.get_json())
+            self.assertTrue(blocked.get_json()["needs_verify"])
+        finally:
+            appmod.smtplib.SMTP = original
+
     def test_admin_attaches_gmail_without_losing_phone_login(self):
         self.client.put("/api/settings", json={"smtp_user": "shop@gmail.com", "smtp_password": "apppassword1"})
         sent = {}
@@ -465,7 +553,8 @@ class DaftarchiTest(unittest.TestCase):
             self.assertEqual(me["email_verified"], 0)
             self.client.post("/api/auth/logout")
             still = self.client.post("/api/auth/login", json={"ident": "09120000000", "password": "daftarchi"})
-            self.assertEqual(still.status_code, 200, still.get_json())
+            self.assertEqual(still.status_code, 403, still.get_json())
+            self.assertTrue(still.get_json()["needs_verify"])
             gmail = self.client.post("/api/auth/login", json={"ident": "owner@gmail.com", "password": "daftarchi"})
             self.assertEqual(gmail.status_code, 403)
             self.assertTrue(gmail.get_json()["needs_verify"])
