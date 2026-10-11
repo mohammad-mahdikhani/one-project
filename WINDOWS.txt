@@ -1,0 +1,16 @@
+فایل اجرای ویندوز اینجاست:
+
+1) Start-Daftarchi.bat
+2) اجرای دفترچی.bat
+3) windows\اجرا.bat
+4) windows\نصب.bat
+
+آدرس در گیت‌هاب (برنچ PR):
+https://github.com/mohammad-mahdikhani/one-project/tree/cursor/accounting-ledger-56dd
+
+دانلود کل پروژه به‌صورت zip:
+https://github.com/mohammad-mahdikhani/one-project/archive/refs/heads/cursor/accounting-ledger-56dd.zip
+
+بعد از باز کردن zip، روی Start-Daftarchi.bat دوبار کلیک کنید.
+ورود: 09120000000 / daftarchi
+آدرس: http://127.0.0.1:8080
