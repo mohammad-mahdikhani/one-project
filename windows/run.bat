@@ -27,7 +27,7 @@ echo Starting Daftarchi...
 echo Open: http://127.0.0.1:8080
 echo Login: 09120000000 / daftarchi
 echo.
-"runtime\python.exe" -c "import flask,openpyxl,jdatetime,waitress,tzdata; from zoneinfo import ZoneInfo; ZoneInfo('Asia/Tehran'); print('deps-ok')" > "%TEMP%\daftarchi-check.txt" 2>&1
+"runtime\python.exe" -c "import flask,openpyxl,jdatetime,waitress; print('deps-ok')" > "%TEMP%\daftarchi-check.txt" 2>&1
 if errorlevel 1 (
   echo Dependency check failed. See %TEMP%\daftarchi-check.txt
   type "%TEMP%\daftarchi-check.txt"

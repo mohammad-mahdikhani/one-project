@@ -18,31 +18,19 @@ import urllib.parse
 import urllib.request
 import uuid
 from contextlib import contextmanager
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from email.message import EmailMessage
 from io import BytesIO
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 import jdatetime
 from flask import Flask, abort, jsonify, request, send_file, send_from_directory, session
 from openpyxl import Workbook, load_workbook
 from werkzeug.exceptions import HTTPException, RequestEntityTooLarge
 
-def _tehran_zone():
-    try:
-        return ZoneInfo("Asia/Tehran")
-    except Exception:
-        try:
-            import tzdata  # noqa: F401
-            return ZoneInfo("Asia/Tehran")
-        except Exception:
-            from datetime import timezone, timedelta
-            return timezone(timedelta(hours=3, minutes=30))
-
-
-TEHRAN = _tehran_zone()
+# ساعت ایران، بدون بسته tzdata. ویندوز آفلاین هم همین را دارد.
+TEHRAN = timezone(timedelta(hours=3, minutes=30))
 DATA = Path(os.environ.get("DAFTARCHI_DATA", Path(__file__).resolve().parent / "data"))
 UPLOAD = DATA / "uploads"
 DB_PATH = DATA / "daftarchi.db"
