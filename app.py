@@ -90,6 +90,8 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
+APP_VERSION = "1.0.1"
+UPDATE_MANIFEST_URL = "https://webakery.ir/daftarchi/version.json"
 SMS_PROVIDERS = {"internal", "kavenegar", "melipayamak"}
 BOOL_KEYS = {"gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock"}
 SYSTEM_ACCOUNTS = [
@@ -119,9 +121,10 @@ log = logging.getLogger("daftarchi")
 
 
 class AppError(Exception):
-    def __init__(self, message: str, status: int = 400):
+    def __init__(self, message: str, status: int = 400, **extra):
         super().__init__(message)
         self.status = status
+        self.extra = extra
 
 
 def now_dt() -> datetime:
@@ -294,6 +297,7 @@ def public_user(row) -> dict:
         "phone": row["phone"],
         "email": row["email"] or "",
         "role": row["role"],
+        "email_verified": int(row["email_verified"] or 0),
     }
 
 
@@ -795,18 +799,20 @@ def deliver_sms(conn, settings: dict, recipient: str, text: str) -> tuple[str, s
 
 
 def deliver_email(conn, settings: dict, recipient: str, subject: str, text: str) -> tuple[str, str]:
-    status, detail = "internal", "جیمیل تنظیم نشده؛ پیام در سیستم ماند"
-    if settings.get("smtp_user") and settings.get("smtp_password"):
+    status, detail = "internal", "جیمیل تنظیم نشده"
+    sender = str(settings.get("smtp_user") or "").strip()
+    secret = str(settings.get("smtp_password") or "").replace(" ", "")
+    if sender and secret:
         try:
             msg = EmailMessage()
             msg["Subject"] = subject
-            msg["From"] = settings["smtp_user"]
+            msg["From"] = sender
             msg["To"] = recipient
             msg.set_content(text)
             with smtplib.SMTP("smtp.gmail.com", 587, timeout=15) as smtp:
                 smtp.ehlo()
                 smtp.starttls()
-                smtp.login(settings["smtp_user"], settings["smtp_password"])
+                smtp.login(sender, secret)
                 smtp.send_message(msg)
             status, detail = "sent", "جیمیل"
         except Exception as exc:
@@ -816,6 +822,82 @@ def deliver_email(conn, settings: dict, recipient: str, subject: str, text: str)
         (recipient, f"{subject}\n{text}", status, detail, iso()),
     )
     return status, detail
+
+
+def gmail_address(value) -> str:
+    email = clean_text(value, "جیمیل", 120).lower()
+    if not re.fullmatch(r"[a-z0-9._%+\-]+@(gmail|googlemail)\.com", email):
+        raise AppError("آدرس باید جیمیل باشد، مثل name@gmail.com")
+    return email
+
+
+def smtp_ready(settings: dict) -> bool:
+    return bool(str(settings.get("smtp_user") or "").strip() and str(settings.get("smtp_password") or "").strip())
+
+
+def explain_gmail(detail: str) -> str:
+    text = str(detail or "")
+    low = text.lower()
+    if "تنظیم نشده" in text or not text.strip():
+        return (
+            "کد به جیمیل نرفت. در تنظیمات دفترچی، بخش جیمیل، آدرس جیمیل فروشگاه و رمز برنامه (App Password) را ذخیره کنید. "
+            "رمز ورود معمولی جیمیل قبول نیست."
+        )
+    if "535" in low or "badcredentials" in low or "username and password not accepted" in low:
+        return (
+            "جیمیل رمز را نپذیرفت. در حساب گوگل یک App Password بسازید و همان را، بدون فاصله، در تنظیمات دفترچی بگذارید. "
+            "رمز ورود خود جیمیل اینجا کار نمی‌کند."
+        )
+    if "timed out" in low or "timeout" in low:
+        return "ارتباط با سرور جیمیل برقرار نشد. اینترنت را بررسی کنید و دوباره کد بفرستید."
+    return f"ارسال کد به جیمیل ناموفق بود: {text[:180]}"
+
+
+def store_code(conn, user_id: int, channel: str) -> str:
+    since = iso(now_dt() - timedelta(minutes=10))
+    recent = conn.execute(
+        "SELECT COUNT(*) AS c FROM password_resets WHERE user_id=? AND created_at>?",
+        (user_id, since),
+    ).fetchone()["c"]
+    if recent >= 5:
+        raise AppError("چند بار درخواست داده‌اید. کمی بعد دوباره تلاش کنید")
+    code = f"{secrets.randbelow(900000) + 100000}"
+    conn.execute(
+        "INSERT INTO password_resets (user_id, code_hash, channel, expires_at, used, created_at) VALUES (?,?,?,?,0,?)",
+        (user_id, hashlib.sha256(code.encode()).hexdigest(), channel, iso(now_dt() + timedelta(minutes=10)), iso()),
+    )
+    return code
+
+
+def send_gmail_code(conn, settings: dict, recipient: str, user_id: int, purpose: str) -> None:
+    if not smtp_ready(settings):
+        raise AppError(explain_gmail("تنظیم نشده"))
+    channel = "verify" if purpose == "verify" else "email"
+    code = store_code(conn, user_id, channel)
+    if purpose == "verify":
+        subject = "کد تأیید حساب دفترچی"
+        text = (
+            f"کد تأیید حساب دفترچی: {code}\n"
+            "این کد تا ۱۰ دقیقه معتبر است.\n"
+            "اگر شما این حساب را نساخته‌اید، این نامه را نادیده بگیرید."
+        )
+    else:
+        subject = "بازیابی رمز دفترچی"
+        text = f"کد بازیابی رمز دفترچی: {code}\nاین کد تا ۱۰ دقیقه معتبر است."
+    status, detail = deliver_email(conn, settings, recipient, subject, text)
+    if status != "sent":
+        raise AppError(explain_gmail(detail))
+
+
+def version_tuple(value: str) -> tuple[int, ...]:
+    parts = []
+    for piece in re.split(r"[^\d]+", str(value or "").strip()):
+        if not piece:
+            continue
+        parts.append(int(piece))
+        if len(parts) == 4:
+            break
+    return tuple(parts) or (0,)
 
 
 def notify_manager(settings_snapshot: dict, text: str):
@@ -1138,6 +1220,7 @@ def init_db():
               email TEXT UNIQUE,
               password_hash TEXT NOT NULL,
               role TEXT NOT NULL CHECK(role IN ('admin','cashier')),
+              email_verified INTEGER NOT NULL DEFAULT 1,
               created_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS accounts (
@@ -1301,10 +1384,13 @@ def init_db():
             CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
             """
         )
+        user_cols = {row["name"] for row in conn.execute("PRAGMA table_info(users)")}
+        if "email_verified" not in user_cols:
+            conn.execute("ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1")
         if not conn.execute("SELECT 1 FROM users LIMIT 1").fetchone():
             conn.execute(
-                "INSERT INTO users (name, phone, email, password_hash, role, created_at) VALUES (?,?,?,?,?,?)",
-                ("مدیر", INITIAL_PHONE, None, hash_pw(INITIAL_PASSWORD), "admin", iso()),
+                "INSERT INTO users (name, phone, email, password_hash, role, email_verified, created_at) VALUES (?,?,?,?,?,?,?)",
+                ("مدیر", INITIAL_PHONE, None, hash_pw(INITIAL_PASSWORD), "admin", 1, iso()),
             )
         if not conn.execute("SELECT 1 FROM accounts LIMIT 1").fetchone():
             for code, name, kind in SYSTEM_ACCOUNTS:
@@ -1336,7 +1422,9 @@ def init_db():
 
 @app.errorhandler(AppError)
 def handle_app_error(exc: AppError):
-    return jsonify(error=str(exc)), exc.status
+    payload = {"error": str(exc)}
+    payload.update(exc.extra)
+    return jsonify(payload), exc.status
 
 
 @app.errorhandler(RequestEntityTooLarge)
@@ -1382,7 +1470,41 @@ def uploaded(name: str):
 
 @app.get("/api/health")
 def health():
-    return jsonify(ok=True, name="دفترچی")
+    return jsonify(ok=True, name="دفترچی", version=APP_VERSION)
+
+
+@app.get("/api/update")
+def update_info():
+    current = APP_VERSION
+    quiet = {
+        "current": current,
+        "available": False,
+        "update": False,
+        "version": "",
+        "url": "",
+        "notes": "",
+        "manifest": UPDATE_MANIFEST_URL,
+    }
+    try:
+        status, body = http_request("GET", UPDATE_MANIFEST_URL, timeout=4)
+    except AppError:
+        return jsonify(quiet)
+    if status >= 400 or not isinstance(body, dict):
+        return jsonify(quiet)
+    latest = str(body.get("version") or "").strip()
+    url = str(body.get("url") or "").strip()
+    notes = str(body.get("notes") or "").strip()[:300]
+    if not latest or not url.startswith("https://"):
+        return jsonify(quiet)
+    return jsonify(
+        current=current,
+        available=True,
+        update=version_tuple(latest) > version_tuple(current),
+        version=latest,
+        url=url,
+        notes=notes,
+        manifest=UPDATE_MANIFEST_URL,
+    )
 
 
 @app.get("/api/auth/bootstrap")
@@ -1403,12 +1525,110 @@ def login():
         row = find_user(conn, ident)
         if not row or not check_pw(password, row["password_hash"]):
             raise AppError("شماره یا رمز نادرست است", 401)
+        unverified = row["email"] and not int(row["email_verified"] or 0)
+        if unverified and ("@" in ident or row["role"] != "admin"):
+            raise AppError(
+                "این حساب هنوز با جیمیل تأیید نشده. کد شش‌رقمی را وارد کنید.",
+                403,
+                needs_verify=True,
+                ident=row["email"],
+            )
         user = public_user(row)
         flag = get_settings(conn).get("must_change_password") == "1"
     session.clear()
     session["uid"] = row["id"]
     session.permanent = True
     return jsonify(user=user, must_change_password=flag)
+
+
+@app.post("/api/auth/register")
+def register():
+    payload = body_json()
+    name = clean_text(payload.get("name"), "نام", 80, required=True)
+    phone = norm_phone(payload.get("phone") or "")
+    email = gmail_address(payload.get("email") or payload.get("gmail"))
+    password = str(payload.get("password") or "")
+    if not re.fullmatch(r"09\d{9}", phone):
+        raise AppError("شماره موبایل معتبر نیست")
+    if len(password) < 6 or len(password) > 100:
+        raise AppError("رمز باید حداقل ۶ حرف باشد")
+    with connect() as conn:
+        phone_owner = conn.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
+        existing = conn.execute("SELECT * FROM users WHERE lower(email)=?", (email,)).fetchone()
+        if phone_owner and (not existing or phone_owner["id"] != existing["id"]):
+            raise AppError("این شماره قبلاً ثبت شده")
+        if existing and int(existing["email_verified"] or 0):
+            raise AppError("این جیمیل قبلاً ثبت شده. وارد شوید یا رمز را بازیابی کنید.")
+        if existing:
+            conn.execute(
+                "UPDATE users SET name=?, phone=?, password_hash=?, email_verified=0 WHERE id=?",
+                (name, phone, hash_pw(password), existing["id"]),
+            )
+            user_id = existing["id"]
+        else:
+            cur = conn.execute(
+                """INSERT INTO users (name, phone, email, password_hash, role, email_verified, created_at)
+                   VALUES (?,?,?,?,?,0,?)""",
+                (name, phone, email, hash_pw(password), "cashier", iso()),
+            )
+            user_id = cur.lastrowid
+        send_gmail_code(conn, get_settings(conn), email, user_id, "verify")
+    return jsonify(ok=True, email=email, delivery="email")
+
+
+@app.post("/api/auth/verify")
+def verify_email():
+    payload = body_json()
+    ident = str(payload.get("ident") or payload.get("email") or "")
+    code = str(payload.get("code") or "").translate(DIGITS).strip()
+    if not re.fullmatch(r"\d{6}", code):
+        raise AppError("کد باید ۶ رقم باشد")
+    with connect() as conn:
+        user = find_user(conn, ident)
+        if not user or not user["email"]:
+            raise AppError("حسابی با این جیمیل پیدا نشد")
+        if int(user["email_verified"] or 0):
+            return jsonify(ok=True, already=True)
+        row = conn.execute(
+            "SELECT * FROM password_resets WHERE user_id=? AND used=0 AND channel='verify' ORDER BY id DESC LIMIT 1",
+            (user["id"],),
+        ).fetchone()
+        digest = hashlib.sha256(code.encode()).hexdigest()
+        if not row or row["expires_at"] < iso() or not secrets.compare_digest(row["code_hash"], digest):
+            raise AppError("کد نادرست یا منقضی است")
+        conn.execute("UPDATE password_resets SET used=1 WHERE id=?", (row["id"],))
+        conn.execute("UPDATE users SET email_verified=1 WHERE id=?", (user["id"],))
+    return jsonify(ok=True)
+
+
+@app.post("/api/auth/verify/resend")
+def resend_verify():
+    payload = body_json()
+    ident = str(payload.get("ident") or payload.get("email") or "")
+    with connect() as conn:
+        user = find_user(conn, ident)
+        if not user or not user["email"]:
+            raise AppError("حسابی با این جیمیل پیدا نشد")
+        if int(user["email_verified"] or 0):
+            raise AppError("این حساب قبلاً تأیید شده. وارد شوید.")
+        send_gmail_code(conn, get_settings(conn), user["email"], user["id"], "verify")
+    return jsonify(ok=True, delivery="email")
+
+
+@app.post("/api/auth/email")
+def attach_email():
+    user = require_user()
+    email = gmail_address(body_json().get("email"))
+    with connect() as conn:
+        other = conn.execute(
+            "SELECT id FROM users WHERE lower(email)=? AND id<>?",
+            (email, user["id"]),
+        ).fetchone()
+        if other:
+            raise AppError("این جیمیل برای کاربر دیگری است")
+        conn.execute("UPDATE users SET email=?, email_verified=0 WHERE id=?", (email, user["id"]))
+        send_gmail_code(conn, get_settings(conn), email, user["id"], "verify")
+    return jsonify(ok=True, email=email)
 
 
 @app.post("/api/auth/logout")
@@ -1449,24 +1669,16 @@ def forgot():
         user = find_user(conn, ident)
         if not user:
             raise AppError("کاربری با این مشخصات پیدا نشد")
-        since = iso(now_dt() - timedelta(minutes=10))
-        recent = conn.execute(
-            "SELECT COUNT(*) AS c FROM password_resets WHERE user_id=? AND created_at>?",
-            (user["id"], since),
-        ).fetchone()["c"]
-        if recent >= 5:
-            raise AppError("چند بار درخواست داده‌اید. کمی بعد دوباره تلاش کنید")
-        code = f"{secrets.randbelow(900000) + 100000}"
-        conn.execute(
-            "INSERT INTO password_resets (user_id, code_hash, channel, expires_at, used, created_at) VALUES (?,?,?,?,0,?)",
-            (user["id"], hashlib.sha256(code.encode()).hexdigest(), "email" if "@" in ident else "sms", iso(now_dt() + timedelta(minutes=10)), iso()),
-        )
         settings = get_settings(conn)
-        text = f"کد بازیابی رمز دفترچی: {code}\nاین کد تا ۱۰ دقیقه معتبر است."
         if "@" in ident:
-            status, detail = deliver_email(conn, settings, user["email"], "بازیابی رمز دفترچی", text)
-            channel = "email"
+            if not user["email"]:
+                raise AppError("برای این حساب جیمیل ثبت نشده")
+            send_gmail_code(conn, settings, user["email"], user["id"], "reset")
+            status, detail, channel = "sent", "جیمیل", "email"
+            code = None
         else:
+            code = store_code(conn, user["id"], "sms")
+            text = f"کد بازیابی رمز دفترچی: {code}\nاین کد تا ۱۰ دقیقه معتبر است."
             status, detail = deliver_sms(conn, settings, user["phone"], text)
             channel = "sms"
     external = status == "sent"
@@ -1488,7 +1700,7 @@ def reset_password():
         if not user:
             raise AppError("کاربری با این مشخصات پیدا نشد")
         row = conn.execute(
-            "SELECT * FROM password_resets WHERE user_id=? AND used=0 ORDER BY id DESC LIMIT 1",
+            "SELECT * FROM password_resets WHERE user_id=? AND used=0 AND channel IN ('email','sms') ORDER BY id DESC LIMIT 1",
             (user["id"],),
         ).fetchone()
         digest = hashlib.sha256(code.encode()).hexdigest()
@@ -1531,8 +1743,8 @@ def create_user():
         if email and conn.execute("SELECT 1 FROM users WHERE lower(email)=?", (email,)).fetchone():
             raise AppError("این ایمیل قبلاً ثبت شده")
         cur = conn.execute(
-            "INSERT INTO users (name, phone, email, password_hash, role, created_at) VALUES (?,?,?,?,?,?)",
-            (name, phone, email or None, hash_pw(password), role, iso()),
+            "INSERT INTO users (name, phone, email, password_hash, role, email_verified, created_at) VALUES (?,?,?,?,?,?,?)",
+            (name, phone, email or None, hash_pw(password), role, 1, iso()),
         )
         row = conn.execute("SELECT * FROM users WHERE id=?", (cur.lastrowid,)).fetchone()
     return jsonify(user=public_user(row))
@@ -2669,10 +2881,10 @@ def test_setting(kind: str):
             status, detail = deliver_sms(conn, settings, phone, "پیام آزمایشی دفترچی")
             message = "پیامک ارسال شد" if status == "sent" else detail
         elif kind == "email":
-            if not settings.get("smtp_user"):
-                raise AppError("آدرس جیمیل را وارد کنید")
+            if not smtp_ready(settings):
+                raise AppError(explain_gmail("تنظیم نشده"))
             status, detail = deliver_email(conn, settings, settings["smtp_user"], "آزمایش دفترچی", "این یک پیام آزمایشی از دفترچی است.")
-            message = "ایمیل ارسال شد" if status == "sent" else detail
+            message = "ایمیل آزمایشی به جیمیل فرستاده شد" if status == "sent" else explain_gmail(detail)
         else:
             raise AppError("آزمایش نامعتبر است")
     return jsonify(ok=True, message=message)

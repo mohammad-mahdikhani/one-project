@@ -347,5 +347,174 @@ class DaftarchiTest(unittest.TestCase):
         self.assertTrue(calls)
 
 
+    def test_gmail_signup_sends_code_and_blocks_login(self):
+        refused = self.client.post("/api/auth/register", json={
+            "name": "نگار", "phone": "09121112222", "email": "negar@yahoo.com", "password": "secret1",
+        })
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("جیمیل", refused.get_json()["error"])
+        missing = self.client.post("/api/auth/register", json={
+            "name": "نگار", "phone": "09121112222", "email": "negar@gmail.com", "password": "secret1",
+        })
+        self.assertEqual(missing.status_code, 400, missing.get_json())
+        self.assertIn("رمز برنامه", missing.get_json()["error"])
+        phones = [row["phone"] for row in self.client.get("/api/users").get_json()["users"]]
+        self.assertNotIn("09121112222", phones)
+
+        saved = self.client.put("/api/settings", json={
+            "smtp_user": "shop@gmail.com",
+            "smtp_password": "abcd efgh ijkl mnop",
+        })
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+
+        class FakeSMTP:
+            def __init__(self, host, port, timeout=None):
+                self.host = host
+
+            def ehlo(self):
+                return None
+
+            def starttls(self):
+                return None
+
+            def login(self, user, secret):
+                FakeSMTP.user = user
+                FakeSMTP.secret = secret
+
+            def send_message(self, msg):
+                FakeSMTP.message = msg
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        original = appmod.smtplib.SMTP
+        appmod.smtplib.SMTP = FakeSMTP
+        try:
+            def reject(self, user, secret):
+                raise appmod.smtplib.SMTPAuthenticationError(535, b"Username and Password not accepted")
+
+            FakeSMTP.login = reject
+            denied = self.client.post("/api/auth/register", json={
+                "name": "نگار", "phone": "09121112222", "email": "negar@gmail.com", "password": "secret1",
+            })
+            self.assertEqual(denied.status_code, 400, denied.get_json())
+            self.assertIn("App Password", denied.get_json()["error"])
+            phones = [row["phone"] for row in self.client.get("/api/users").get_json()["users"]]
+            self.assertNotIn("09121112222", phones)
+
+            FakeSMTP.login = lambda self, user, secret: (
+                setattr(FakeSMTP, "user", user),
+                setattr(FakeSMTP, "secret", secret),
+            )
+            created = self.client.post("/api/auth/register", json={
+                "name": "نگار", "phone": "09121112222", "email": "Negar@gmail.com", "password": "secret1",
+            })
+            self.assertEqual(created.status_code, 200, created.get_json())
+            self.assertEqual(created.get_json()["email"], "negar@gmail.com")
+            self.assertIsNone(created.get_json().get("preview_code"))
+            self.assertEqual(FakeSMTP.user, "shop@gmail.com")
+            self.assertEqual(FakeSMTP.secret, "abcdefghijklmnop")
+            self.assertEqual(FakeSMTP.message["To"], "negar@gmail.com")
+            code = "".join(ch for ch in FakeSMTP.message.get_content() if ch.isdigit())[:6]
+            self.assertRegex(code, r"\d{6}")
+
+            self.client.post("/api/auth/logout")
+            blocked = self.client.post("/api/auth/login", json={"ident": "negar@gmail.com", "password": "secret1"})
+            self.assertEqual(blocked.status_code, 403, blocked.get_json())
+            self.assertTrue(blocked.get_json()["needs_verify"])
+            blocked_phone = self.client.post("/api/auth/login", json={"ident": "09121112222", "password": "secret1"})
+            self.assertEqual(blocked_phone.status_code, 403)
+            wrong = self.client.post("/api/auth/verify", json={"ident": "negar@gmail.com", "code": "000000"})
+            self.assertEqual(wrong.status_code, 400)
+            verified = self.client.post("/api/auth/verify", json={"ident": "negar@gmail.com", "code": code})
+            self.assertEqual(verified.status_code, 200, verified.get_json())
+            self.login("negar@gmail.com", "secret1")
+            self.client.post("/api/auth/logout")
+            forgot = self.client.post("/api/auth/forgot", json={"ident": "negar@gmail.com"})
+            self.assertEqual(forgot.status_code, 200, forgot.get_json())
+            self.assertIsNone(forgot.get_json()["preview_code"])
+            self.assertEqual(forgot.get_json()["delivery"], "email")
+            reset_code = "".join(ch for ch in FakeSMTP.message.get_content() if ch.isdigit())[:6]
+            reset = self.client.post("/api/auth/reset", json={
+                "ident": "negar@gmail.com", "code": reset_code, "password": "secret2",
+            })
+            self.assertEqual(reset.status_code, 200, reset.get_json())
+            self.login("negar@gmail.com", "secret2")
+        finally:
+            appmod.smtplib.SMTP = original
+
+    def test_admin_attaches_gmail_without_losing_phone_login(self):
+        self.client.put("/api/settings", json={"smtp_user": "shop@gmail.com", "smtp_password": "apppassword1"})
+        sent = {}
+
+        def fake_mail(conn, settings, recipient, subject, text):
+            sent["text"] = text
+            sent["to"] = recipient
+            return "sent", "جیمیل"
+
+        original = appmod.deliver_email
+        appmod.deliver_email = fake_mail
+        try:
+            attached = self.client.post("/api/auth/email", json={"email": "owner@gmail.com"})
+            self.assertEqual(attached.status_code, 200, attached.get_json())
+            me = self.client.get("/api/auth/me").get_json()["user"]
+            self.assertEqual(me["email"], "owner@gmail.com")
+            self.assertEqual(me["email_verified"], 0)
+            self.client.post("/api/auth/logout")
+            still = self.client.post("/api/auth/login", json={"ident": "09120000000", "password": "daftarchi"})
+            self.assertEqual(still.status_code, 200, still.get_json())
+            gmail = self.client.post("/api/auth/login", json={"ident": "owner@gmail.com", "password": "daftarchi"})
+            self.assertEqual(gmail.status_code, 403)
+            self.assertTrue(gmail.get_json()["needs_verify"])
+            code = "".join(ch for ch in sent["text"] if ch.isdigit())[:6]
+            verified = self.client.post("/api/auth/verify", json={"ident": "owner@gmail.com", "code": code})
+            self.assertEqual(verified.status_code, 200, verified.get_json())
+            self.client.post("/api/auth/logout")
+            self.login("owner@gmail.com", "daftarchi")
+        finally:
+            appmod.deliver_email = original
+
+    def test_update_manifest_from_webakery_folder(self):
+        original = appmod.http_request
+
+        def newer(method, url, payload=None, headers=None, form=None, timeout=12):
+            self.assertEqual(url, "https://webakery.ir/daftarchi/version.json")
+            self.assertLessEqual(timeout, 4)
+            return 200, {
+                "version": "1.2.0",
+                "url": "https://webakery.ir/daftarchi/Daftarchi-Setup.exe",
+                "notes": "رفع ورود",
+            }
+
+        def offline(method, url, payload=None, headers=None, form=None, timeout=12):
+            raise appmod.AppError("اتصال برقرار نشد", 502)
+
+        def current(method, url, payload=None, headers=None, form=None, timeout=12):
+            return 200, {"version": appmod.APP_VERSION, "url": "https://webakery.ir/daftarchi/Daftarchi-Setup.exe"}
+
+        try:
+            appmod.http_request = newer
+            body = self.client.get("/api/update").get_json()
+            self.assertEqual(body["current"], "1.0.1")
+            self.assertTrue(body["update"])
+            self.assertTrue(body["available"])
+            self.assertEqual(body["url"], "https://webakery.ir/daftarchi/Daftarchi-Setup.exe")
+            self.assertEqual(body["notes"], "رفع ورود")
+            appmod.http_request = current
+            same = self.client.get("/api/update").get_json()
+            self.assertFalse(same["update"])
+            self.assertTrue(same["available"])
+            appmod.http_request = offline
+            down = self.client.get("/api/update").get_json()
+            self.assertFalse(down["available"])
+            self.assertFalse(down["update"])
+            self.assertEqual(down["manifest"], "https://webakery.ir/daftarchi/version.json")
+        finally:
+            appmod.http_request = original
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,5 +10,19 @@ https://github.com/mohammad-mahdikhani/one-project/raw/cursor/accounting-ledger-
 ورود اولیه: 09120000000 / daftarchi
 آدرس: http://127.0.0.1:8080
 
+ساخت حساب با جیمیل، کد شش‌رقمی را به جیمیل می‌فرستد.
+قبل از آن، مدیر باید در تنظیمات دفترچی آدرس جیمیل فروشگاه و رمز برنامه (App Password) را ذخیره کند.
+رمز ورود معمولی جیمیل قبول نیست.
+
+فایل‌های آپدیت، روی هاست و کنار wp-admin:
+
+  public_html/daftarchi/version.json
+  public_html/daftarchi/Daftarchi-Setup.exe
+
+آدرس‌ها:
+
+  https://webakery.ir/daftarchi/version.json
+  https://webakery.ir/daftarchi/Daftarchi-Setup.exe
+
 حذف برنامه از منوی استارت، «حذف دفترچی»، یا از تنظیمات ویندوز.
 اطلاعات فروشگاه در پوشه نصب می‌ماند.

@@ -22,6 +22,9 @@ const state = {
   bootstrap: null,
   authView: "login",
   recovery: null,
+  pendingEmail: "",
+  verifyNote: "",
+  update: null,
   page: "dashboard",
   busy: false,
   modal: null,
@@ -104,13 +107,21 @@ async function api(path, { method = "GET", body, form } = {}) {
   }
   const res = await fetch(path, opts);
   const data = await res.json().catch(() => ({}));
-  if (res.status === 401) {
-    state.user = null;
-    render();
-    throw new Error(data.error || "وارد نشده‌اید");
+  if (!res.ok) {
+    const err = new Error(data.error || (res.status === 401 ? "وارد نشده‌اید" : "خطا"));
+    err.status = res.status;
+    err.data = data;
+    if (res.status === 401) {
+      state.user = null;
+      render();
+    }
+    throw err;
   }
-  if (!res.ok) throw new Error(data.error || "خطا");
   return data;
+}
+async function loadUpdate() {
+  try { state.update = await api("/api/update"); }
+  catch { state.update = null; }
 }
 function isAdmin() { return state.user?.role === "admin"; }
 function allowed(page) {
@@ -128,6 +139,7 @@ async function guard(fn) {
 
 const loaders = {
   async dashboard() {
+    await loadUpdate();
     const [summary, sales, registerInfo] = await Promise.all([
       api("/api/reports/summary"), api("/api/sales?limit=8"), api("/api/register"),
     ]);
@@ -171,6 +183,7 @@ const loaders = {
     state.sms = (await api("/api/sms")).messages;
   },
   async settings() {
+    await loadUpdate();
     const [settings, users] = await Promise.all([api("/api/settings"), api("/api/users")]);
     state.settings = settings.settings;
     state.users = users.users;
@@ -238,7 +251,37 @@ async function addByBarcode(code) {
   if (input) input.value = "";
 }
 
+function updateBanner() {
+  if (!state.update?.update) return "";
+  return `<div class="banner">نسخه ${esc(state.update.version)} آماده است.
+    <a class="btn" href="${esc(state.update.url)}" target="_blank" rel="noopener">دانلود نصب‌کننده</a>
+    ${state.update.notes ? `<div class="hint">${esc(state.update.notes)}</div>` : ""}
+  </div>`;
+}
 function authHtml() {
+  if (state.authView === "verify") {
+    return `<div class="auth"><form class="card auth-card" data-act="verify">
+      <div class="brand"><div class="mark">${logo()}</div><div><strong>تأیید جیمیل</strong><span>دفترچی</span></div></div>
+      <p class="hint">${esc(state.verifyNote || "کد شش‌رقمی به جیمیل فرستاده شد. صندوق ورودی و هرزنامه را ببینید.")}</p>
+      <div class="field"><label>جیمیل</label><input class="ltr" name="ident" value="${esc(state.pendingEmail || "")}" required></div>
+      <div class="field"><label>کد ۶ رقمی</label><input class="ltr" name="code" inputmode="numeric" autocomplete="one-time-code" required></div>
+      <button class="btn primary block" type="submit">تأیید حساب</button>
+      <button class="btn block" type="button" data-act="resend-verify">ارسال دوباره کد</button>
+      <button class="btn block" type="button" data-act="show-login">بازگشت به ورود</button>
+    </form></div>`;
+  }
+  if (state.authView === "register") {
+    return `<div class="auth"><form class="card auth-card" data-act="register">
+      <div class="brand"><div class="mark">${logo()}</div><div><strong>ساخت حساب</strong><span>با جیمیل</span></div></div>
+      <p class="hint">بعد از ثبت، یک کد شش‌رقمی به همین جیمیل فرستاده می‌شود. تا کد را وارد نکنید ورود باز نمی‌شود.</p>
+      <div class="field"><label>نام</label><input name="name" required></div>
+      <div class="field"><label>موبایل</label><input class="ltr" name="phone" required placeholder="09..."></div>
+      <div class="field"><label>جیمیل</label><input class="ltr" name="email" type="email" required placeholder="name@gmail.com"></div>
+      <div class="field"><label>رمز</label><input type="password" name="password" minlength="6" required></div>
+      <button class="btn primary block" type="submit">ساخت حساب و دریافت کد</button>
+      <button class="btn block" type="button" data-act="show-login">بازگشت</button>
+    </form></div>`;
+  }
   if (state.authView === "reset") {
     const recovery = state.recovery || {};
     return `<div class="auth"><form class="card auth-card" data-act="reset">
@@ -268,7 +311,9 @@ function authHtml() {
     <div class="field"><label>موبایل یا جیمیل</label><input name="ident" autocomplete="username" required value="${state.bootstrap?.initial ? esc(state.bootstrap.phone) : ""}"></div>
     <div class="field"><label>رمز</label><input type="password" name="password" autocomplete="current-password" required></div>
     <button class="btn primary block" type="submit">ورود</button>
+    <button class="btn block" type="button" data-act="show-register">ساخت حساب با جیمیل</button>
     <button class="btn block" type="button" data-act="show-forgot">رمز را فراموش کرده‌ام</button>
+    ${updateBanner()}
     ${initial}
   </form></div>`;
 }
@@ -283,9 +328,10 @@ function shell(content) {
   const pill = state.registerInfo
     ? `<span class="pill ${open ? "" : "warn"}">${open ? "صندوق باز" : "صندوق بسته"}</span>`
     : "";
-  const banner = state.mustChange
-    ? `<div class="banner">رمز اولیه هنوز فعال است. <button type="button" class="btn" data-act="password-modal">عوضش کنید</button></div>`
-    : "";
+  const banner = [
+    state.mustChange ? `<div class="banner">رمز اولیه هنوز فعال است. <button type="button" class="btn" data-act="password-modal">عوضش کنید</button></div>` : "",
+    updateBanner(),
+  ].join("");
   return `<div class="shell">
     <aside class="sidebar">
       <div class="brand"><div class="mark">${logo()}</div><div><strong>دفترچی</strong><span>${esc(state.user.name)}</span></div></div>
@@ -550,15 +596,23 @@ function settingsHtml() {
       <label class="check"><input type="checkbox" name="sms_low_stock" ${checked("sms_low_stock")}>پیامک موجودی کم</label>
       <button type="button" class="btn" data-act="test-setting" data-kind="sms">پیام آزمایشی</button>
     </section>
-    <section class="card"><h2 class="section-title">جیمیل برای بازیابی رمز</h2>
-      ${field("smtp_user", "آدرس جیمیل")}${field("smtp_password", "رمز برنامه جیمیل", "password")}
+    <section class="card"><h2 class="section-title">جیمیل فرستنده کد تأیید</h2>
+      ${field("smtp_user", "آدرس جیمیل فروشگاه")}${field("smtp_password", "رمز برنامه جیمیل", "password")}
       <button type="button" class="btn" data-act="test-setting" data-kind="email">ایمیل آزمایشی</button>
-      <p class="hint">در جیمیل باید App Password بسازید، نه رمز ورود معمولی.</p>
+      <p class="hint">کد ساخت حساب، تأیید جیمیل و بازیابی رمز از همین آدرس فرستاده می‌شود. در جیمیل یک App Password بسازید؛ رمز ورود معمولی قبول نیست. فاصله‌های رمز برنامه موقع ارسال حذف می‌شوند.</p>
+    </section>
+    <section class="card"><h2 class="section-title">جای فایل‌های آپدیت</h2>
+      <p class="hint">نسخه نصب‌شده: ${esc(state.update?.current || "")}. دفترچی این آدرس را می‌خواند:</p>
+      <p class="ltr">https://webakery.ir/daftarchi/version.json</p>
+      <p class="hint">روی هاست، کنار پوشه wp-admin، پوشه daftarchi را بسازید و فقط همین دو فایل را داخلش بگذارید:</p>
+      <p class="ltr">version.json</p>
+      <p class="ltr">Daftarchi-Setup.exe</p>
+      <p class="hint">اگر اینترنت قطع باشد فروشگاه مثل قبل کار می‌کند. نصب نسخه جدید پوشه اطلاعات را پاک نمی‌کند.</p>
     </section>
     <button class="btn primary" type="submit">ذخیره تنظیمات</button>
   </form>
   <section class="card" style="margin-top:14px"><h2 class="section-title">ساخت اکانت</h2>
-    <table><thead><tr><th>نام</th><th>موبایل</th><th>نقش</th></tr></thead><tbody>${state.users.map((user) => `<tr><td>${esc(user.name)}</td><td class="ltr">${esc(user.phone)}</td><td>${user.role === "admin" ? "مدیر" : "صندوقدار"}</td></tr>`).join("")}</tbody></table>
+    <table><thead><tr><th>نام</th><th>موبایل</th><th>جیمیل</th><th>نقش</th></tr></thead><tbody>${state.users.map((user) => `<tr><td>${esc(user.name)}</td><td class="ltr">${esc(user.phone)}</td><td class="ltr">${esc(user.email || "—")}${user.email && !user.email_verified ? " · تأیید نشده" : ""}</td><td>${user.role === "admin" ? "مدیر" : "صندوقدار"}</td></tr>`).join("")}</tbody></table>
     <form data-act="create-user"><div class="grid-2"><div class="field"><label>نام</label><input name="name" required></div><div class="field"><label>موبایل</label><input class="ltr" name="phone" required></div></div><div class="grid-2"><div class="field"><label>جیمیل</label><input class="ltr" name="email"></div><div class="field"><label>رمز</label><input type="password" name="password" required></div></div><div class="field"><label>نقش</label><select name="role"><option value="cashier">صندوقدار</option><option value="admin">مدیر</option></select></div><button class="btn primary" type="submit">ساخت کاربر</button></form>
   </section>`;
 }
@@ -598,7 +652,9 @@ function modalHtml() {
     const sale = modal.sale;
     inner = `<div id="print-area"><h2>دفترچی</h2><p>فاکتور ${num(sale.id)} · ${esc(sale.at_jalali)}</p><p>${esc(sale.customer_name || "")} ${esc(sale.customer_phone || "")}</p><table>${modal.items.map((item) => `<tr><td>${esc(item.name)} × ${num(item.qty)}</td><td class="num">${money(item.line_total)}</td></tr>`).join("")}</table><p>تخفیف ${money(sale.discount)}</p><p><strong>قابل پرداخت ${money(sale.payable)}</strong></p><p>${PAY[sale.payment_method] || ""}</p></div><button type="button" class="btn" data-act="print">چاپ</button>`;
   }
-  if (modal.type === "password") inner = `<form data-act="change-password"><h2 class="section-title">تغییر رمز</h2><div class="field"><label>رمز فعلی</label><input type="password" name="current" required></div><div class="field"><label>رمز جدید</label><input type="password" name="password" minlength="6" required></div><button class="btn primary" type="submit">ذخیره</button></form>`;
+  if (modal.type === "password") inner = `<form data-act="change-password"><h2 class="section-title">تغییر رمز</h2><div class="field"><label>رمز فعلی</label><input type="password" name="current" required></div><div class="field"><label>رمز جدید</label><input type="password" name="password" minlength="6" required></div><button class="btn primary" type="submit">ذخیره</button></form>
+    <form data-act="attach-email"><h2 class="section-title">ورود با جیمیل</h2><p class="hint">کد تأیید به همین جیمیل می‌رود. تا تأیید نشود، ورود با جیمیل باز نمی‌شود. ورود با موبایل مدیر همچنان کار می‌کند.</p><div class="field"><label>جیمیل</label><input class="ltr" name="email" type="email" value="${esc(state.user.email || "")}" required placeholder="name@gmail.com"></div><button class="btn primary" type="submit">فرستادن کد</button></form>
+    <form data-act="verify-email"><div class="field"><label>کد ۶ رقمی جیمیل</label><input class="ltr" name="code" inputmode="numeric" required></div><button class="btn" type="submit">تأیید جیمیل</button></form>`;
   return `<div class="modal-back" data-act="close-modal"><div class="modal card" data-act="stop"><div class="row-actions"><button type="button" class="btn" data-act="close-modal">بستن</button></div>${inner}</div></div>`;
 }
 
@@ -631,10 +687,44 @@ async function onSubmit(event) {
   const data = Object.fromEntries(new FormData(form).entries());
   await guard(async () => {
     if (act === "login") {
-      const result = await api("/api/auth/login", { method: "POST", body: data });
-      state.user = result.user;
-      state.mustChange = result.must_change_password;
-      await navigate("dashboard");
+      try {
+        const result = await api("/api/auth/login", { method: "POST", body: data });
+        state.user = result.user;
+        state.mustChange = result.must_change_password;
+        await navigate("dashboard");
+      } catch (err) {
+        if (err.data?.needs_verify) {
+          state.pendingEmail = err.data.ident || data.ident;
+          state.verifyNote = err.message;
+          state.authView = "verify";
+          render();
+          return;
+        }
+        throw err;
+      }
+    } else if (act === "register") {
+      const result = await api("/api/auth/register", { method: "POST", body: data });
+      state.pendingEmail = result.email;
+      state.verifyNote = "کد شش‌رقمی به جیمیل فرستاده شد. صندوق ورودی و هرزنامه را ببینید.";
+      state.authView = "verify";
+      render();
+    } else if (act === "verify") {
+      await api("/api/auth/verify", { method: "POST", body: { ident: data.ident, code: data.code } });
+      state.authView = "login";
+      toast("جیمیل تأیید شد. حالا وارد شوید.");
+      render();
+    } else if (act === "attach-email") {
+      const result = await api("/api/auth/email", { method: "POST", body: { email: data.email } });
+      state.user.email = result.email;
+      state.user.email_verified = 0;
+      toast("کد تأیید به جیمیل فرستاده شد");
+      render();
+    } else if (act === "verify-email") {
+      await api("/api/auth/verify", { method: "POST", body: { ident: state.user.email, code: data.code } });
+      state.user = (await api("/api/auth/me")).user;
+      state.modal = null;
+      toast("جیمیل تأیید شد. از این به بعد با همین جیمیل هم می‌توانید وارد شوید.");
+      render();
     } else if (act === "forgot") {
       const result = await api("/api/auth/forgot", { method: "POST", body: { ident: data.ident } });
       state.recovery = { ident: data.ident, code: result.preview_code || "", delivery: result.delivery, detail: result.detail };
@@ -798,7 +888,17 @@ async function onClick(event) {
   const act = el.dataset.act;
   if (act === "close-modal") { state.modal = null; render(); return; }
   if (act === "show-forgot") { state.authView = "forgot"; render(); return; }
+  if (act === "show-register") { state.authView = "register"; render(); return; }
   if (act === "show-login") { state.authView = "login"; render(); return; }
+  if (act === "resend-verify") {
+    await guard(async () => {
+      await api("/api/auth/verify/resend", { method: "POST", body: { ident: state.pendingEmail || document.querySelector('[name="ident"]')?.value || "" } });
+      state.verifyNote = "کد تازه به جیمیل فرستاده شد.";
+      toast("کد دوباره فرستاده شد");
+      render();
+    });
+    return;
+  }
   if (act === "nav") { await guard(() => navigate(el.dataset.page)); return; }
   if (act === "chart") { state.chart = el.dataset.range; render(); return; }
   if (act === "pick-plan") { state.plan = el.dataset.plan; render(); return; }
@@ -969,6 +1069,9 @@ window.addEventListener("hashchange", () => {
 });
 
 api("/api/auth/me").then(async (me) => {
+  loadUpdate().then(() => {
+    if (!state.user) render();
+  });
   if (!me.user) {
     state.bootstrap = await api("/api/auth/bootstrap");
     render();

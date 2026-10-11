@@ -125,6 +125,7 @@ h1, h2, h3, p { margin: 0; }
 .btn.primary { background: var(--accent); color: white; border-color: var(--accent); }
 .btn.danger { color: var(--danger); }
 .btn.block { width: 100%; }
+a.btn { display: inline-block; text-decoration: none; color: inherit; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .pay-row, .row-actions, .inline { display: flex; gap: 8px; flex-wrap: wrap; }
 
