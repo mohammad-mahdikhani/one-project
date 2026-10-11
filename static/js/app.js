@@ -561,9 +561,9 @@ function productForm() {
   return `<form data-act="save-product"><h2 class="section-title">${product.id ? "ویرایش کالا" : "کالای جدید"}</h2>
     <input type="hidden" name="id" value="${product.id || ""}">
     <div class="field"><label>نام کالا</label><input name="name" value="${esc(product.name || "")}" required></div>
-    <div class="field"><label>قیمت فروش، تومان</label><input name="price" inputmode="numeric" required placeholder="45000" value="${price}"></div>
-    <div class="field"><label>موجودی</label><input name="stock" inputmode="numeric" value="${product.stock ?? 0}"></div>
-    <div class="field"><label>بارکد</label><input class="ltr" name="barcode" value="${esc(product.barcode || "")}" placeholder="111"></div>
+    <div class="field"><label>قیمت فروش، تومان</label><input name="price" inputmode="decimal" required autocomplete="off" value="${price}"></div>
+    <div class="field"><label>موجودی</label><input name="stock" inputmode="numeric" autocomplete="off" value="${product.id ? product.stock : ""}"></div>
+    <div class="field"><label>بارکد</label><input class="ltr" name="barcode" autocomplete="off" value="${esc(product.barcode || "")}"></div>
     <details ${product.id ? "open" : ""}>
       <summary>کد، قیمت خرید و تصویر</summary>
       <div class="field"><label>کد کالا</label><input name="sku" value="${esc(product.sku || "")}"></div>
