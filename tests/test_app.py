@@ -156,6 +156,18 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(books["4200"]["amount"], 12000000)
         self.assertEqual(books["1000"]["amount"], 10000000)
 
+    def test_archived_barcode_can_be_used_again(self):
+        product = self.add_product()
+        removed = self.client.delete(f"/api/products/{product['id']}")
+        self.assertEqual(removed.status_code, 200)
+        again = self.add_product(name="چای تازه", price=45000, stock=10)
+        self.assertEqual(again["id"], product["id"])
+        self.assertEqual(again["name"], "چای تازه")
+        self.assertEqual(again["stock"], 10)
+        duplicate = self.client.post("/api/products", json={"name": "دیگر", "price": 1000, "barcode": "111"})
+        self.assertEqual(duplicate.status_code, 400)
+        self.assertIn("بارکد", duplicate.get_json()["error"])
+
     def test_excel_import_and_archive(self):
         book = Workbook()
         sheet = book.active

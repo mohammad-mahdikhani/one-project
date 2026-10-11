@@ -452,6 +452,14 @@ def ensure_customer(conn, name: str, phone: str, credit: bool) -> dict:
     return {"id": cur.lastrowid, "name": display, "phone": phone_n, "account_id": account_id}
 
 
+def match_product(conn, barcode: str | None, sku: str | None):
+    by_barcode = conn.execute("SELECT * FROM products WHERE barcode=?", (barcode,)).fetchone() if barcode else None
+    by_sku = conn.execute("SELECT * FROM products WHERE sku=?", (sku,)).fetchone() if sku else None
+    if by_barcode and by_sku and by_barcode["id"] != by_sku["id"]:
+        raise AppError("بارکد و کد به دو کالای متفاوت مربوط است")
+    return by_barcode or by_sku
+
+
 def product_dict(row, threshold: int) -> dict:
     return {
         "id": row["id"],
@@ -1258,7 +1266,7 @@ def handle_large(_exc):
 
 @app.errorhandler(sqlite3.IntegrityError)
 def handle_integrity(_exc):
-    return jsonify(error="این مقدار تکراری است"), 400
+    return jsonify(error="این کد یا بارکد قبلاً ثبت شده است"), 400
 
 
 @app.errorhandler(Exception)
@@ -1480,15 +1488,31 @@ def create_product():
     barcode = clean_code(payload.get("barcode"), "بارکد")
     image = clean_image(payload.get("image"))
     with connect() as conn:
-        cur = conn.execute(
-            """INSERT INTO products (name, sku, barcode, price, cost, stock, image, woo_id, active, created_at, updated_at)
-               VALUES (?,?,?,?,?,?,?,NULL,1,?,?)""",
-            (name, sku, barcode, price, cost, stock, image, iso(), iso()),
-        )
-        if stock:
-            log_stock(conn, cur.lastrowid, "adjust", stock, 0, stock, "موجودی اولیه", user["id"])
+        existing = match_product(conn, barcode, sku)
+        if existing and existing["active"]:
+            raise AppError("این بارکد یا کد قبلاً برای کالای دیگری ثبت شده")
+        if existing:
+            conn.execute(
+                """UPDATE products SET name=?, sku=?, barcode=?, price=?, cost=?, stock=?, image=COALESCE(?, image),
+                   active=1, updated_at=? WHERE id=?""",
+                (name, sku, barcode, price, cost, stock, image, iso(), existing["id"]),
+            )
+            if price != existing["price"]:
+                log_stock(conn, existing["id"], "price", 0, existing["price"], price, "بازگشت از بایگانی", user["id"])
+            if stock != existing["stock"]:
+                log_stock(conn, existing["id"], "adjust", stock - existing["stock"], existing["stock"], stock, "بازگشت از بایگانی", user["id"])
+            product_id = existing["id"]
+        else:
+            cur = conn.execute(
+                """INSERT INTO products (name, sku, barcode, price, cost, stock, image, woo_id, active, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,NULL,1,?,?)""",
+                (name, sku, barcode, price, cost, stock, image, iso(), iso()),
+            )
+            product_id = cur.lastrowid
+            if stock:
+                log_stock(conn, product_id, "adjust", stock, 0, stock, "موجودی اولیه", user["id"])
         threshold = setting_int(get_settings(conn), "low_stock")
-        row = conn.execute("SELECT * FROM products WHERE id=?", (cur.lastrowid,)).fetchone()
+        row = conn.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
     return jsonify(product=product_dict(row, threshold))
 
 
