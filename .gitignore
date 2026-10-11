@@ -3,3 +3,7 @@ __pycache__/
 .venv/
 data/
 .pytest_cache/
+dist/
+windows/installed.flag
+windows/runtime/Lib/
+windows/runtime/Scripts/
