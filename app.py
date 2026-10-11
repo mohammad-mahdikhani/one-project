@@ -1283,7 +1283,7 @@ def handle_exception(exc: Exception):
 
 @app.after_request
 def no_store(resp):
-    if request.path.startswith("/api/"):
+    if request.path.startswith("/api/") or request.path.startswith("/static/"):
         resp.headers["Cache-Control"] = "no-store"
     return resp
 

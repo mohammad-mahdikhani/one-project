@@ -385,7 +385,7 @@ function productRows() {
   const query = state.productQuery.trim();
   const rows = state.products.filter((product) => !query || `${product.name} ${product.barcode} ${product.sku}`.includes(query));
   if (!rows.length) return `<p class="empty">کالایی ثبت نشده. از فرم بالا یا فایل اکسل شروع کنید.</p>`;
-  return `<table><thead><tr><th></th><th>نام</th><th>بارکد</th><th>قیمت</th><th>موجودی</th><th></th></tr></thead><tbody>
+  return `<table><thead><tr><th></th><th>نام</th><th>بارکد</th><th>قیمت فروش</th><th>موجودی</th><th></th></tr></thead><tbody>
     ${rows.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}${product.woo_id ? ` <span class="pill">ووکامرس</span>` : ""}</td><td class="ltr">${esc(product.barcode || "—")}</td><td class="num">${money(product.price)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td><td class="row-actions"><button type="button" class="btn" data-act="edit-product" data-id="${product.id}">ویرایش</button><button type="button" class="btn danger" data-act="archive-product" data-id="${product.id}">بایگانی</button></td></tr>`).join("")}
   </tbody></table>`;
 }
@@ -556,15 +556,22 @@ function settingsHtml() {
 
 function productForm() {
   const product = state.modal?.product || {};
+  const price = product.id ? product.price : "";
+  const cost = product.cost ? product.cost : "";
   return `<form data-act="save-product"><h2 class="section-title">${product.id ? "ویرایش کالا" : "کالای جدید"}</h2>
     <input type="hidden" name="id" value="${product.id || ""}">
-    <div class="field"><label>نام</label><input name="name" value="${esc(product.name || "")}" required></div>
-    <div class="grid-2"><div class="field"><label>کد</label><input name="sku" value="${esc(product.sku || "")}"></div><div class="field"><label>بارکد</label><input class="ltr" name="barcode" value="${esc(product.barcode || "")}"></div></div>
-    <div class="grid-2"><div class="field"><label>قیمت فروش</label><input name="price" value="${product.price ?? ""}" required></div><div class="field"><label>قیمت خرید</label><input name="cost" value="${product.cost ?? 0}"></div></div>
-    <div class="field"><label>موجودی</label><input name="stock" value="${product.stock ?? 0}"></div>
-    <div class="field"><label>آدرس تصویر</label><input class="ltr" name="image" value="${esc(product.image || "")}"></div>
-    <div class="field"><label>یا بارگذاری تصویر</label><input type="file" name="file" accept="image/*"></div>
-    ${product.image ? thumb(product.image, product.name) : ""}
+    <div class="field"><label>نام کالا</label><input name="name" value="${esc(product.name || "")}" required></div>
+    <div class="field"><label>قیمت فروش، تومان</label><input name="price" inputmode="numeric" required placeholder="45000" value="${price}"></div>
+    <div class="field"><label>موجودی</label><input name="stock" inputmode="numeric" value="${product.stock ?? 0}"></div>
+    <div class="field"><label>بارکد</label><input class="ltr" name="barcode" value="${esc(product.barcode || "")}" placeholder="111"></div>
+    <details ${product.id ? "open" : ""}>
+      <summary>کد، قیمت خرید و تصویر</summary>
+      <div class="field"><label>کد کالا</label><input name="sku" value="${esc(product.sku || "")}"></div>
+      <div class="field"><label>قیمت خرید، تومان</label><input name="cost" inputmode="numeric" placeholder="اختیاری" value="${cost}"></div>
+      <div class="field"><label>آدرس تصویر</label><input class="ltr" name="image" value="${esc(product.image || "")}"></div>
+      <div class="field"><label>یا بارگذاری تصویر</label><input type="file" name="file" accept="image/*"></div>
+      ${product.image ? thumb(product.image, product.name) : ""}
+    </details>
     <button class="btn primary" type="submit">ذخیره</button></form>`;
 }
 function modalHtml() {
