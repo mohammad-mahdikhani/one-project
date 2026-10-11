@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import calendar
 import hashlib
+import html
 import json
 import logging
 import os
@@ -53,7 +54,7 @@ HEADER_MAP = {
     "image": "image", "تصویر": "image", "آدرس تصویر": "image",
 }
 DEFAULT_SETTINGS = {
-    "wp_url": "",
+    "wp_url": "https://webakery.ir",
     "woo_key": "",
     "woo_secret": "",
     "pos_provider": "manual",
@@ -62,7 +63,7 @@ DEFAULT_SETTINGS = {
     "pos_terminal": "",
     "gateway": "zarinpal",
     "gateway_merchant": "",
-    "gateway_callback": "",
+    "gateway_callback": "https://webakery.ir",
     "gateway_sandbox": "0",
     "sms_provider": "internal",
     "sms_api_key": "",
@@ -85,6 +86,8 @@ DEFAULT_SETTINGS = {
 }
 POS_PROVIDERS = {"manual", "saman", "behpardakht", "parsian", "irankish", "sepehr", "asanpardakht"}
 GATEWAYS = {"zarinpal", "idpay", "zibal"}
+WEBAKERY_URL = "https://webakery.ir"
+SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 SMS_PROVIDERS = {"internal", "kavenegar", "melipayamak"}
 BOOL_KEYS = {"gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock"}
 SYSTEM_ACCOUNTS = [
@@ -619,7 +622,7 @@ def session_figures(conn, sess) -> dict:
 
     def license_sum(method: str) -> int:
         row = conn.execute(
-            "SELECT COALESCE(SUM(payable),0) AS s FROM licenses WHERE session_id=? AND payment_method=?",
+            "SELECT COALESCE(SUM(payable),0) AS s FROM licenses WHERE session_id=? AND payment_method=? AND status='paid'",
             (sid, method),
         ).fetchone()
         return int(row["s"])
@@ -905,11 +908,25 @@ def summary_for(conn, kind: str) -> dict:
     }
 
 
-def gateway_request(settings: dict, sale_id: int, payable: int, phone: str) -> tuple[str, str]:
+def payment_settings(settings: dict) -> dict:
+    data = dict(settings)
+    merchant = (data.get("gateway_merchant") or "").strip()
+    if not merchant and data.get("gateway_sandbox") == "1":
+        merchant = SANDBOX_MERCHANT
+    callback = (data.get("gateway_callback") or "").strip()
+    if not callback.startswith("http://") and not callback.startswith("https://"):
+        callback = WEBAKERY_URL
+    data["gateway_merchant"] = merchant
+    data["gateway_callback"] = callback.rstrip("/")
+    return data
+
+
+def gateway_request(settings: dict, sale_id: int, payable: int, phone: str, description: str | None = None) -> tuple[str, str]:
+    settings = payment_settings(settings)
     merchant = (settings.get("gateway_merchant") or "").strip()
     callback = (settings.get("gateway_callback") or "").strip()
     if not merchant:
-        raise AppError("شناسه پذیرنده درگاه در تنظیمات خالی است")
+        raise AppError("مرچنت کد درگاه وب‌بیکری را در تنظیمات وارد کنید")
     if not callback.startswith("http://") and not callback.startswith("https://"):
         raise AppError("آدرس بازگشت درگاه را در تنظیمات وارد کنید")
     if payable < 1000:
@@ -917,7 +934,7 @@ def gateway_request(settings: dict, sale_id: int, payable: int, phone: str) -> t
     gateway = settings.get("gateway") or "zarinpal"
     sandbox = settings.get("gateway_sandbox") == "1"
     amount = payable * 10
-    description = f"فاکتور {sale_id} دفترچی"
+    description = description or f"فاکتور {sale_id} دفترچی"
     if gateway == "zarinpal":
         host = "https://sandbox.zarinpal.com" if sandbox else "https://api.zarinpal.com"
         code, body = http_request("POST", f"{host}/pg/v4/payment/request.json", {
@@ -959,6 +976,7 @@ def gateway_request(settings: dict, sale_id: int, payable: int, phone: str) -> t
 
 
 def gateway_verify(settings: dict, sale) -> str:
+    settings = payment_settings(settings)
     gateway = sale["gateway"] or settings.get("gateway") or "zarinpal"
     merchant = (settings.get("gateway_merchant") or "").strip()
     sandbox = settings.get("gateway_sandbox") == "1"
@@ -992,7 +1010,41 @@ def gateway_verify(settings: dict, sale) -> str:
         if not isinstance(body, dict) or body.get("result") not in (100, 201, "100", "201"):
             raise AppError("پرداخت زیبال تأیید نشد", 502)
         return str(body.get("refNumber") or ref)
+    if gateway == "woocommerce":
+        code, body = http_request("GET", woo_url(settings, f"orders/{ref}"))
+        if code >= 400 or not isinstance(body, dict):
+            raise AppError("وب‌بیکری وضعیت سفارش را نداد", 502)
+        if body.get("status") not in {"processing", "completed"}:
+            raise AppError("پرداخت در وب‌بیکری هنوز تأیید نشده است", 502)
+        return str(body.get("transaction_id") or ref)
     raise AppError("درگاه ناشناخته است")
+
+
+def webakery_payment(settings: dict, order_id: int, title: str, payable: int, buyer: str, phone: str) -> tuple[str, str, str]:
+    merchant = (settings.get("gateway_merchant") or "").strip()
+    sandbox = settings.get("gateway_sandbox") == "1"
+    description = f"لایسنس {title} دفترچی — webakery.ir"
+    if merchant or sandbox:
+        ref, pay_url = gateway_request(settings, order_id, payable, phone, description)
+        return settings.get("gateway") or "zarinpal", ref, pay_url
+    if settings.get("wp_url") and settings.get("woo_key") and settings.get("woo_secret"):
+        require_woo(settings)
+        code, body = http_request("POST", woo_url(settings, "orders"), {
+            "status": "pending",
+            "set_paid": False,
+            "billing": {"first_name": buyer, "phone": phone},
+            "fee_lines": [{"name": description, "total": str(payable)}],
+            "meta_data": [{"key": "daftarchi_license", "value": str(order_id)}],
+        })
+        if code >= 400 or not isinstance(body, dict) or not body.get("id"):
+            raise AppError("وب‌بیکری سفارش لایسنس را نساخت", 502)
+        pay_url = body.get("payment_url") or ""
+        if not pay_url and body.get("order_key"):
+            pay_url = f"{clean_base(settings['wp_url'])}/checkout/order-pay/{body['id']}/?pay_for_order=true&key={body['order_key']}"
+        if not pay_url:
+            raise AppError("وب‌بیکری لینک پرداخت نداد", 502)
+        return "woocommerce", str(body["id"]), pay_url
+    raise AppError("مرچنت کد درگاه وب‌بیکری را در تنظیمات وارد کنید")
 
 
 def woo_item(row) -> dict:
@@ -1200,7 +1252,11 @@ def init_db():
               payment_method TEXT NOT NULL,
               session_id INTEGER,
               user_id INTEGER,
-              created_at TEXT NOT NULL
+              created_at TEXT NOT NULL,
+              status TEXT NOT NULL DEFAULT 'paid',
+              gateway TEXT,
+              gateway_ref TEXT,
+              pay_url TEXT
             );
             CREATE TABLE IF NOT EXISTS receipts (
               id INTEGER PRIMARY KEY,
@@ -1252,6 +1308,19 @@ def init_db():
                 )
         for key, value in DEFAULT_SETTINGS.items():
             conn.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?,?)", (key, value))
+        for key in ("wp_url", "gateway_callback"):
+            row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+            if row and not str(row["value"] or "").strip():
+                conn.execute("UPDATE settings SET value=? WHERE key=?", (DEFAULT_SETTINGS[key], key))
+        have = {row["name"] for row in conn.execute("PRAGMA table_info(licenses)")}
+        if "status" not in have:
+            conn.execute("ALTER TABLE licenses ADD COLUMN status TEXT NOT NULL DEFAULT 'paid'")
+        if "gateway" not in have:
+            conn.execute("ALTER TABLE licenses ADD COLUMN gateway TEXT")
+        if "gateway_ref" not in have:
+            conn.execute("ALTER TABLE licenses ADD COLUMN gateway_ref TEXT")
+        if "pay_url" not in have:
+            conn.execute("ALTER TABLE licenses ADD COLUMN pay_url TEXT")
 
 
 @app.errorhandler(AppError)
@@ -2276,12 +2345,49 @@ def create_receipt():
     return jsonify(ok=True)
 
 
+def license_out(row) -> dict:
+    item = dict(row)
+    item["starts_jalali"] = to_jalali(row["starts_at"]) if row["starts_at"] else ""
+    item["ends_jalali"] = to_jalali(row["ends_at"]) if row["ends_at"] else ""
+    item["title"] = PLANS.get(row["plan"], (row["plan"], 0, ""))[0]
+    item["status"] = row["status"] or "paid"
+    return item
+
+
+def mark_license_paid(conn, license_id: int, user_id: int, ref: str):
+    row = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
+    if not row:
+        raise AppError("لایسنس پیدا نشد", 404)
+    if row["status"] == "paid":
+        return row
+    if row["status"] != "pending":
+        raise AppError("این لایسنس قابل تأیید نیست")
+    title, months, _price_key = PLANS[row["plan"]]
+    start = now_dt().replace(microsecond=0)
+    end = add_months(start, months)
+    updated = conn.execute(
+        "UPDATE licenses SET status='paid', gateway_ref=?, starts_at=?, ends_at=? WHERE id=? AND status='pending'",
+        (ref, iso(start), iso(end), license_id),
+    )
+    if updated.rowcount != 1:
+        return conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
+    lines = []
+    if row["payable"]:
+        lines.append((acc(conn, "1020")["id"], int(row["payable"]), 0))
+    if row["discount"]:
+        lines.append((acc(conn, "4100")["id"], int(row["discount"]), 0))
+    if row["list_price"]:
+        lines.append((acc(conn, "4200")["id"], 0, int(row["list_price"])))
+    post_entry(conn, f"لایسنس {title} برای {row['buyer_name']}", lines, "license", license_id, user_id)
+    return conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
+
+
 @app.get("/api/licenses")
 def list_licenses():
     require_admin()
     with connect() as conn:
         settings = get_settings(conn)
-        sold = conn.execute("SELECT COUNT(*) AS c FROM licenses WHERE plan='50y'").fetchone()["c"]
+        sold = conn.execute("SELECT COUNT(*) AS c FROM licenses WHERE plan='50y' AND status!='canceled'").fetchone()["c"]
         cap = setting_int(settings, "cap_50y")
         rows = conn.execute("SELECT * FROM licenses ORDER BY id DESC LIMIT 50").fetchall()
     plans = []
@@ -2291,14 +2397,7 @@ def list_licenses():
             item["cap"] = cap
             item["remaining"] = max(0, cap - sold)
         plans.append(item)
-    licenses = []
-    for row in rows:
-        item = dict(row)
-        item["starts_jalali"] = to_jalali(row["starts_at"])
-        item["ends_jalali"] = to_jalali(row["ends_at"])
-        item["title"] = PLANS.get(row["plan"], (row["plan"], 0, ""))[0]
-        licenses.append(item)
-    return jsonify(plans=plans, licenses=licenses)
+    return jsonify(plans=plans, licenses=[license_out(row) for row in rows])
 
 
 @app.put("/api/licenses/prices")
@@ -2320,7 +2419,7 @@ def sell_license():
         raise AppError("طرح لایسنس نامعتبر است")
     title, months, price_key = PLANS[plan]
     method = payload.get("payment_method") or "cash"
-    if method not in {"cash", "card"}:
+    if method not in {"cash", "card", "gateway"}:
         raise AppError("روش پرداخت لایسنس نامعتبر است")
     buyer = clean_text(payload.get("buyer_name"), "نام خریدار", 80, required=True)
     phone = norm_phone(payload.get("phone") or "")
@@ -2330,30 +2429,138 @@ def sell_license():
         settings = get_settings(conn)
         if plan == "50y":
             cap = setting_int(settings, "cap_50y")
-            sold = conn.execute("SELECT COUNT(*) AS c FROM licenses WHERE plan='50y'").fetchone()["c"]
+            sold = conn.execute("SELECT COUNT(*) AS c FROM licenses WHERE plan='50y' AND status!='canceled'").fetchone()["c"]
             if sold >= cap:
                 raise AppError("ظرفیت لایسنس پنجاه‌ساله تمام شده است")
         list_price = setting_int(settings, price_key)
         discount = calc_discount(list_price, payload.get("discount_type") or "amount", payload.get("discount_value"))
         payable = list_price - discount
-        sess = require_open(conn)
+        if method == "gateway" and payable < 1000:
+            raise AppError("حداقل مبلغ درگاه ۱۰۰۰ تومان است")
+        sess = None if method == "gateway" else require_open(conn)
         start = now_dt().replace(microsecond=0)
         end = add_months(start, months)
+        status = "pending" if method == "gateway" else "paid"
         cur = conn.execute(
             """INSERT INTO licenses (plan, list_price, discount, payable, buyer_name, phone, starts_at, ends_at,
-               payment_method, session_id, user_id, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (plan, list_price, discount, payable, buyer, phone, iso(start), iso(end), method, sess["id"], user["id"], iso()),
+               payment_method, session_id, user_id, created_at, status)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (
+                plan, list_price, discount, payable, buyer, phone, iso(start), iso(end), method,
+                sess["id"] if sess else None, user["id"], iso(), status,
+            ),
         )
-        lines = []
-        if payable:
-            lines.append((acc(conn, "1000" if method == "cash" else "1010")["id"], payable, 0))
-        if discount:
-            lines.append((acc(conn, "4100")["id"], discount, 0))
-        if list_price:
-            lines.append((acc(conn, "4200")["id"], 0, list_price))
-        post_entry(conn, f"لایسنس {title} برای {buyer}", lines, "license", cur.lastrowid, user["id"])
-    return jsonify(ok=True, payable=payable)
+        license_id = cur.lastrowid
+        if method != "gateway":
+            lines = []
+            if payable:
+                lines.append((acc(conn, "1000" if method == "cash" else "1010")["id"], payable, 0))
+            if discount:
+                lines.append((acc(conn, "4100")["id"], discount, 0))
+            if list_price:
+                lines.append((acc(conn, "4200")["id"], 0, list_price))
+            post_entry(conn, f"لایسنس {title} برای {buyer}", lines, "license", license_id, user["id"])
+            saved = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
+    if method == "gateway":
+        try:
+            gateway_name, ref, pay_url = webakery_payment(settings, license_id, title, payable, buyer, phone)
+        except Exception:
+            with connect() as conn:
+                conn.execute("UPDATE licenses SET status='canceled' WHERE id=? AND status='pending'", (license_id,))
+            raise
+        with connect() as conn:
+            conn.execute(
+                "UPDATE licenses SET gateway=?, gateway_ref=?, pay_url=? WHERE id=?",
+                (gateway_name, ref, pay_url, license_id),
+            )
+            saved = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
+    return jsonify(ok=True, payable=payable, license=license_out(saved))
+
+
+@app.post("/api/licenses/<int:license_id>/confirm")
+def confirm_license(license_id: int):
+    user = require_admin()
+    payload = body_json()
+    mode = payload.get("mode") or "verify"
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
+        if not row:
+            raise AppError("لایسنس پیدا نشد", 404)
+        if row["status"] == "paid":
+            return jsonify(ok=True, license=license_out(row))
+        if row["status"] != "pending":
+            raise AppError("این لایسنس قابل تأیید نیست")
+        settings = get_settings(conn)
+    if mode == "manual":
+        ref = clean_text(payload.get("ref"), "پیگیری", 64)
+        if len(ref) < 3:
+            raise AppError("شماره پیگیری را وارد کنید")
+    else:
+        ref = gateway_verify(settings, row)
+    with connect() as conn:
+        saved = mark_license_paid(conn, license_id, user["id"], ref)
+        settings = get_settings(conn)
+    if settings.get("sms_on_sale") == "1":
+        notify_manager(settings, f"دفترچی: لایسنس وب‌بیکری {saved['payable']:,} تومان برای {saved['buyer_name']}")
+    return jsonify(ok=True, payable=saved["payable"], license=license_out(saved))
+
+
+@app.post("/api/licenses/<int:license_id>/cancel")
+def cancel_license(license_id: int):
+    require_admin()
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
+        if not row:
+            raise AppError("لایسنس پیدا نشد", 404)
+        if row["status"] != "pending":
+            raise AppError("فقط لایسنس در انتظار پرداخت را می‌توان لغو کرد")
+        conn.execute("UPDATE licenses SET status='canceled' WHERE id=?", (license_id,))
+    return jsonify(ok=True)
+
+
+@app.get("/pay/return")
+def pay_return():
+    authority = (request.args.get("Authority") or request.args.get("authority") or request.args.get("trackId") or request.args.get("id") or "").strip()
+    status = (request.args.get("Status") or request.args.get("status") or "").strip().upper()
+    if not authority:
+        return pay_page("شناسه پرداخت نیامد", False), 400
+    if status and status not in {"OK", "100", "1", "SUCCESS"}:
+        return pay_page("پرداخت در وب‌بیکری انجام نشد یا لغو شد.", False)
+    with connect() as conn:
+        row = conn.execute("SELECT * FROM licenses WHERE gateway_ref=? AND status='pending'", (authority,)).fetchone()
+        sale = None if row else conn.execute("SELECT * FROM sales WHERE gateway_ref=? AND status='pending'", (authority,)).fetchone()
+        settings = get_settings(conn)
+    try:
+        if row:
+            ref = gateway_verify(settings, row)
+            with connect() as conn:
+                mark_license_paid(conn, row["id"], row["user_id"], ref)
+            return pay_page("لایسنس پرداخت شد و در دفترچی فعال است.", True)
+        if sale:
+            ref = gateway_verify(settings, sale)
+            with connect() as conn:
+                current = conn.execute("SELECT status FROM sales WHERE id=?", (sale["id"],)).fetchone()
+                if current and current["status"] == "pending":
+                    finalize_sale(conn, sale["id"], sale["user_id"])
+                    conn.execute("UPDATE sales SET gateway_ref=?, pos_ref=? WHERE id=?", (ref, ref, sale["id"]))
+            return pay_page("فاکتور پرداخت شد.", True)
+    except AppError as exc:
+        return pay_page(str(exc), False), exc.status
+    return pay_page("پرداختی با این شناسه در انتظار تأیید نیست.", False), 404
+
+
+def pay_page(message: str, ok: bool):
+    tone = "#1f7a4d" if ok else "#9b3a3a"
+    safe = html.escape(message)
+    return (
+        "<!doctype html><html lang='fa' dir='rtl'><meta charset='utf-8'>"
+        "<meta name='viewport' content='width=device-width,initial-scale=1'>"
+        f"<title>دفترچی</title><body style='font-family:tahoma,sans-serif;background:#f6f4ef;color:#1c1a17;padding:32px'>"
+        f"<main style='max-width:420px;margin:auto;background:#fff;border:1px solid #e4ddd2;border-radius:16px;padding:24px'>"
+        f"<h1 style='font-size:20px;margin:0 0 12px'>بازگشت از وب‌بیکری</h1>"
+        f"<p style='color:{tone}'>{safe}</p>"
+        "<p><a href='/'>برگشت به دفترچی</a></p></main></body></html>"
+    )
 
 
 @app.get("/api/sms")
@@ -2409,9 +2616,14 @@ def test_setting(kind: str):
         if kind == "wp":
             base = clean_base(settings.get("wp_url") or "")
             status, body = http_request("GET", base + "/wp-json")
-            if status >= 400 or not isinstance(body, dict):
-                raise AppError("وردپرس پاسخ نداد", 502)
-            message = f"اتصال برقرار است: {body.get('name') or 'وردپرس'}"
+            if status < 400 and isinstance(body, dict) and body.get("name"):
+                message = f"اتصال برقرار است: {body.get('name')}"
+            else:
+                status, body = http_request("GET", base + "/wp-login.php")
+                raw = body.get("raw", "") if isinstance(body, dict) else ""
+                if status >= 400 or "وردپرس" not in raw:
+                    raise AppError("وردپرس پاسخ نداد", 502)
+                message = "ورود وردپرس webakery.ir برقرار است. صفحه فروشگاه الان خطای سرور می‌دهد."
         elif kind == "woo":
             require_woo(settings)
             status, body = http_request("GET", woo_url(settings, "products", {"per_page": "1"}))

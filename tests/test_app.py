@@ -278,5 +278,83 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
 
+    def test_license_pays_through_webakery_gateway(self):
+        blocked = self.client.post("/api/licenses", json={
+            "plan": "3m", "buyer_name": "مشتری", "phone": "09121111111", "payment_method": "gateway",
+        })
+        self.assertEqual(blocked.status_code, 400)
+        self.assertIn("مرچنت", blocked.get_json()["error"])
+
+        calls = []
+
+        def fake_http(method, url, payload=None, headers=None, form=None, timeout=12):
+            calls.append((method, url, payload))
+            if url.endswith("/request.json"):
+                self.assertEqual(payload["callback_url"], "https://webakery.ir")
+                self.assertEqual(payload["amount"], 60000000)
+                self.assertIn("webakery.ir", payload["description"])
+                return 200, {"data": {"code": 100, "authority": "A-WEBAKERY"}}
+            if url.endswith("/verify.json"):
+                self.assertEqual(payload["authority"], "A-WEBAKERY")
+                self.assertEqual(payload["merchant_id"], appmod.SANDBOX_MERCHANT)
+                return 200, {"data": {"code": 100, "ref_id": 4455}}
+            if url.endswith("/wp-json"):
+                return 500, None
+            if url.endswith("/wp-login.php"):
+                return 200, {"raw": "<title>ورود وردپرس</title>"}
+            if "/orders" in url and method == "POST":
+                return 201, {"id": 77, "payment_url": "https://webakery.ir/checkout/order-pay/77/?key=wc"}
+            if url.endswith("/orders/77") or "/orders/77?" in url:
+                return 200, {"id": 77, "status": "processing", "transaction_id": "WC-1"}
+            return 200, []
+
+        original = appmod.http_request
+        appmod.http_request = fake_http
+        try:
+            self.client.put("/api/settings", json={"gateway_sandbox": "1", "gateway": "zarinpal", "gateway_merchant": ""})
+            pending = self.client.post("/api/licenses", json={
+                "plan": "3m", "buyer_name": "فروشگاه وب", "phone": "09123334455", "payment_method": "gateway",
+            })
+            self.assertEqual(pending.status_code, 200, pending.get_json())
+            lic = pending.get_json()["license"]
+            self.assertEqual(lic["status"], "pending")
+            self.assertIn("A-WEBAKERY", lic["pay_url"])
+            self.assertEqual(self.accounts()["4200"]["amount"], 0)
+            returned = self.client.get("/pay/return?Authority=A-WEBAKERY&Status=OK")
+            self.assertEqual(returned.status_code, 200)
+            self.assertIn("فعال", returned.get_data(as_text=True))
+            books = self.accounts()
+            self.assertEqual(books["4200"]["amount"], 6000000)
+            self.assertEqual(books["1020"]["amount"], 6000000)
+            self.assertEqual(books["1000"]["amount"], 0)
+            listed = self.client.get("/api/licenses").get_json()["licenses"]
+            self.assertEqual(listed[0]["status"], "paid")
+            site = self.client.post("/api/settings/test/wp")
+            self.assertEqual(site.status_code, 200, site.get_json())
+            self.assertIn("وردپرس", site.get_json()["message"])
+
+            self.client.put("/api/settings", json={
+                "gateway_sandbox": "0",
+                "gateway_merchant": "",
+                "wp_url": "https://webakery.ir",
+                "woo_key": "ck",
+                "woo_secret": "cs",
+            })
+            woo = self.client.post("/api/licenses", json={
+                "plan": "6m", "buyer_name": "خریدار سایت", "phone": "09120001111", "payment_method": "gateway",
+            })
+            self.assertEqual(woo.status_code, 200, woo.get_json())
+            order = woo.get_json()["license"]
+            self.assertEqual(order["gateway"], "woocommerce")
+            self.assertIn("webakery.ir/checkout", order["pay_url"])
+            confirmed = self.client.post(f"/api/licenses/{order['id']}/confirm", json={"mode": "verify"})
+            self.assertEqual(confirmed.status_code, 200, confirmed.get_json())
+            self.assertEqual(confirmed.get_json()["license"]["status"], "paid")
+            self.assertEqual(self.accounts()["1020"]["amount"], 18000000)
+        finally:
+            appmod.http_request = original
+        self.assertTrue(calls)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -11,7 +11,8 @@ const NAV = [
   ["settings", "تنظیمات", "admin"],
 ];
 const TITLES = Object.fromEntries(NAV.map(([id, title]) => [id, title]));
-const PAY = { cash: "نقد", card: "کارت", gateway: "درگاه", credit: "نسیه" };
+const PAY = { cash: "نقد", card: "کارت", gateway: "درگاه وب‌بیکری", credit: "نسیه" };
+const LICENSE_STATUS = { paid: "پرداخت‌شده", pending: "در انتظار پرداخت", canceled: "لغو" };
 const TYPES = { asset: "دارایی", liability: "بدهی", equity: "سرمایه", income: "درآمد", expense: "هزینه", person: "شخص" };
 const KINDS = { sale: "فروش", purchase: "خرید", adjust: "تعدیل", price: "تغییر قیمت" };
 
@@ -473,8 +474,9 @@ function licensesHtml() {
     <section class="card"><form data-act="sell-license"><input type="hidden" name="plan" value="${esc(state.plan)}">
       <div class="grid-2"><div class="field"><label>نام خریدار</label><input name="buyer_name" required></div><div class="field"><label>شماره تماس</label><input class="ltr" name="phone" required></div></div>
       <div class="grid-2"><div class="field"><label>تخفیف</label><input name="discount_value" value="0"></div><div class="field"><label>نوع تخفیف</label><select name="discount_type"><option value="amount">مبلغ</option><option value="percent">درصد</option></select></div></div>
-      <div class="field"><label>پرداخت</label><select name="payment_method"><option value="cash">نقد</option><option value="card">کارت</option></select></div>
-      <button class="btn primary" type="submit">ثبت لایسنس</button></form>
+      <div class="field"><label>پرداخت</label><select name="payment_method"><option value="cash">نقد</option><option value="card">کارت</option><option value="gateway">درگاه وب‌بیکری</option></select></div>
+      <button class="btn primary" type="submit">ثبت لایسنس</button>
+      <p class="hint">درگاه وب‌بیکری با مرچنت کد زرین‌پال سایت webakery.ir لینک پرداخت می‌سازد. اگر مرچنت خالی باشد و کلید ووکامرس پر باشد، خریدار به صفحه پرداخت همان سایت می‌رود.</p></form>
       <details><summary>قیمت‌ها و ظرفیت پنجاه‌ساله</summary><form data-act="save-prices"><div class="grid-2">
         ${[["price_3m", "سه ماهه"], ["price_6m", "شش ماهه"], ["price_12m", "یک ساله"], ["price_50y", "پنجاه ساله"], ["cap_50y", "ظرفیت پنجاه ساله"]].map(([key, label]) => {
           const plan = data.plans.find((item) => item.id === { price_3m: "3m", price_6m: "6m", price_12m: "12m", price_50y: "50y" }[key]);
@@ -483,9 +485,16 @@ function licensesHtml() {
         }).join("")}
       </div><button class="btn" type="submit">ذخیره قیمت‌ها</button></form></details>
     </section>
-    <section class="card"><h2 class="section-title">لایسنس‌های فروخته‌شده</h2><table><thead><tr><th>طرح</th><th>خریدار</th><th>تماس</th><th>مبلغ</th><th>تا</th></tr></thead><tbody>
-      ${data.licenses.map((row) => `<tr><td>${esc(row.title)}</td><td>${esc(row.buyer_name)}</td><td class="ltr">${esc(row.phone)}</td><td class="num">${money(row.payable)}</td><td>${esc(row.ends_jalali)}</td></tr>`).join("") || `<tr><td colspan="5">هنوز لایسنسی فروخته نشده.</td></tr>`}
+    ${pendingLicenses(data)}
+    <section class="card"><h2 class="section-title">لایسنس‌های فروخته‌شده</h2><table><thead><tr><th>طرح</th><th>خریدار</th><th>تماس</th><th>مبلغ</th><th>وضعیت</th><th>تا</th></tr></thead><tbody>
+      ${data.licenses.map((row) => `<tr><td>${esc(row.title)}</td><td>${esc(row.buyer_name)}</td><td class="ltr">${esc(row.phone)}</td><td class="num">${money(row.payable)}</td><td>${esc(LICENSE_STATUS[row.status] || row.status)}</td><td>${esc(row.ends_jalali)}</td></tr>`).join("") || `<tr><td colspan="6">هنوز لایسنسی فروخته نشده.</td></tr>`}
     </tbody></table></section></div>`;
+}
+
+function pendingLicenses(data) {
+  const rows = (data.licenses || []).filter((row) => row.status === "pending");
+  if (!rows.length) return "";
+  return `<section class="card"><h2 class="section-title">پرداخت‌های باز وب‌بیکری</h2>${rows.map((row) => `<div class="line"><span>${esc(row.title)} · ${esc(row.buyer_name)} · ${money(row.payable)}</span><button type="button" class="btn" data-act="open-license" data-id="${row.id}">ادامه</button></div>`).join("")}</section>`;
 }
 
 function customersHtml() {
@@ -507,7 +516,7 @@ function options(pairs, current) {
   return pairs.map(([value, label]) => `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`).join("");
 }
 function field(key, label, type = "text") {
-  return `<div class="field"><label>${label}</label><input name="${key}" type="${type}" value="${esc(state.settings[key] || "")}" ${type === "text" && /url|host|phone|sender|key|user/.test(key) ? `class="ltr"` : ""}></div>`;
+  return `<div class="field"><label>${label}</label><input name="${key}" type="${type}" value="${esc(state.settings[key] || "")}" ${type === "text" && /url|host|phone|sender|key|user|merchant|callback/.test(key) ? `class="ltr"` : ""}></div>`;
 }
 function settingsHtml() {
   const s = state.settings;
@@ -527,9 +536,9 @@ function settingsHtml() {
     </section>
     <section class="card"><h2 class="section-title">درگاه پرداخت</h2>
       <div class="field"><label>درگاه</label><select name="gateway">${options([["zarinpal", "زرین‌پال"], ["idpay", "آی‌دی‌پی"], ["zibal", "زیبال"]], s.gateway)}</select></div>
-      ${field("gateway_merchant", "شناسه پذیرنده")}${field("gateway_callback", "آدرس بازگشت")}
-      <label class="check"><input type="checkbox" name="gateway_sandbox" ${checked("gateway_sandbox")}>حالت آزمایشی</label>
-      <p class="hint">مبلغ‌ها در دفترچی تومان است و برای درگاه به ریال تبدیل می‌شود.</p>
+      ${field("gateway_merchant", "مرچنت کد وب‌بیکری")}${field("gateway_callback", "آدرس بازگشت")}
+      <label class="check"><input type="checkbox" name="gateway_sandbox" ${checked("gateway_sandbox")}>حالت آزمایشی زرین‌پال</label>
+      <p class="hint">مرچنت کد همان شناسه پذیرنده درگاه webakery.ir است. مبلغ تومان است و برای درگاه به ریال تبدیل می‌شود. اگر آزمایشی روشن باشد و مرچنت خالی باشد، درخواست به سندباکس زرین‌پال می‌رود. بازگشت پیش‌فرض خود سایت است.</p>
     </section>
     <section class="card"><h2 class="section-title">پیامک</h2>
       <div class="field"><label>سامانه</label><select name="sms_provider">${options([["internal", "فقط داخل دفترچی"], ["kavenegar", "کاوه‌نگار"], ["melipayamak", "ملی‌پیامک"]], s.sms_provider)}</select></div>
@@ -581,6 +590,10 @@ function modalHtml() {
   if (modal.type === "product") inner = productForm();
   if (modal.type === "card") inner = `<h2 class="section-title">کارت‌خوان</h2><p>${esc(modal.message || "")}</p><div class="field"><label>شماره پیگیری رسید</label><input id="pos-ref" class="ltr"></div><button type="button" class="btn primary" data-act="confirm-card">ثبت پرداخت کارت</button>`;
   if (modal.type === "gateway") inner = `<h2 class="section-title">پرداخت درگاهی</h2><p>فاکتور ${num(modal.sale.id)} · ${money(modal.sale.payable)}</p>${modal.sale.pay_url ? `<p><a href="${esc(modal.sale.pay_url)}" target="_blank" rel="noopener">باز کردن صفحه درگاه</a></p>` : ""}<div class="row-actions"><button type="button" class="btn primary" data-act="verify-sale" data-id="${modal.sale.id}">استعلام تأیید</button><button type="button" class="btn danger" data-act="cancel-sale" data-id="${modal.sale.id}">لغو</button></div><form data-act="manual-gateway"><input type="hidden" name="id" value="${modal.sale.id}"><div class="field"><label>اگر در پنل درگاه پرداخت را دیدید، پیگیری را بنویسید</label><input name="ref" required></div><button class="btn" type="submit">ثبت دستی</button></form>`;
+  if (modal.type === "license") {
+    const lic = modal.license;
+    inner = `<h2 class="section-title">پرداخت لایسنس در وب‌بیکری</h2><p>${esc(lic.title)} · ${esc(lic.buyer_name)} · ${money(lic.payable)}</p>${lic.pay_url ? `<p><a href="${esc(lic.pay_url)}" target="_blank" rel="noopener">باز کردن صفحه پرداخت webakery.ir</a></p>` : ""}<div class="row-actions"><button type="button" class="btn primary" data-act="verify-license" data-id="${lic.id}">استعلام تأیید</button><button type="button" class="btn danger" data-act="cancel-license" data-id="${lic.id}">لغو</button></div><form data-act="manual-license"><input type="hidden" name="id" value="${lic.id}"><div class="field"><label>اگر در پنل درگاه پرداخت را دیدید، پیگیری را بنویسید</label><input name="ref" required></div><button class="btn" type="submit">ثبت دستی</button></form>`;
+  }
   if (modal.type === "receipt") {
     const sale = modal.sale;
     inner = `<div id="print-area"><h2>دفترچی</h2><p>فاکتور ${num(sale.id)} · ${esc(sale.at_jalali)}</p><p>${esc(sale.customer_name || "")} ${esc(sale.customer_phone || "")}</p><table>${modal.items.map((item) => `<tr><td>${esc(item.name)} × ${num(item.qty)}</td><td class="num">${money(item.line_total)}</td></tr>`).join("")}</table><p>تخفیف ${money(sale.discount)}</p><p><strong>قابل پرداخت ${money(sale.payable)}</strong></p><p>${PAY[sale.payment_method] || ""}</p></div><button type="button" class="btn" data-act="print">چاپ</button>`;
@@ -671,7 +684,10 @@ async function onSubmit(event) {
     } else if (act === "sell-license") {
       data.plan = state.plan;
       const result = await api("/api/licenses", { method: "POST", body: data });
-      toast(`لایسنس ثبت شد: ${money(result.payable)}`);
+      if (result.license?.status === "pending") {
+        state.modal = { type: "license", license: result.license };
+        toast("لینک پرداخت وب‌بیکری آماده است");
+      } else toast(`لایسنس ثبت شد: ${money(result.payable)}`);
       await loaders.licenses();
       render();
     } else if (act === "save-prices") {
@@ -695,6 +711,12 @@ async function onSubmit(event) {
       state.cart = [];
       await loaders.pos();
       toast("پرداخت ثبت شد");
+      render();
+    } else if (act === "manual-license") {
+      const result = await api(`/api/licenses/${data.id}/confirm`, { method: "POST", body: { mode: "manual", ref: data.ref } });
+      state.modal = null;
+      toast(`لایسنس ثبت شد: ${money(result.payable)}`);
+      await loaders.licenses();
       render();
     }
   });
@@ -850,6 +872,23 @@ async function onClick(event) {
       await api(`/api/sales/${el.dataset.id}/cancel`, { method: "POST", body: {} });
       state.modal = null;
       await loaders.pos();
+      render();
+    } else if (act === "verify-license" || act === "open-license") {
+      const id = el.dataset.id;
+      if (act === "verify-license") {
+        const result = await api(`/api/licenses/${id}/confirm`, { method: "POST", body: { mode: "verify" } });
+        state.modal = null;
+        toast(`لایسنس پرداخت شد: ${money(result.payable)}`);
+      } else {
+        const license = state.licenses?.licenses?.find((item) => item.id === Number(id));
+        if (license) state.modal = { type: "license", license };
+      }
+      await loaders.licenses();
+      render();
+    } else if (act === "cancel-license") {
+      await api(`/api/licenses/${el.dataset.id}/cancel`, { method: "POST", body: {} });
+      state.modal = null;
+      await loaders.licenses();
       render();
     } else if (act === "filter-account") {
       state.accountId = el.dataset.id || "";
