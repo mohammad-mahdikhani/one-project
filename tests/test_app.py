@@ -408,13 +408,15 @@ class DaftarchiTest(unittest.TestCase):
                 raise appmod.smtplib.SMTPAuthenticationError(535, b"Username and Password not accepted")
 
             FakeSMTP.login = reject
-            denied = self.client.post("/api/auth/register", json={
+            opened_anyway = self.client.post("/api/auth/register", json={
                 "name": "نگار", "phone": "09124445566", "email": "negar3@gmail.com", "password": "secret1",
             })
-            self.assertEqual(denied.status_code, 400, denied.get_json())
-            self.assertIn("App Password", denied.get_json()["error"])
-            phones = [row["phone"] for row in self.client.get("/api/users").get_json()["users"]]
-            self.assertNotIn("09124445566", phones)
+            self.assertEqual(opened_anyway.status_code, 200, opened_anyway.get_json())
+            self.assertFalse(opened_anyway.get_json()["needs_verify"])
+            self.assertEqual(opened_anyway.get_json()["user"]["email"], "negar3@gmail.com")
+            self.client.post("/api/auth/logout")
+            self.login("negar3@gmail.com", "secret1")
+            self.client.post("/api/auth/logout")
 
             FakeSMTP.login = lambda self, user, secret: (
                 setattr(FakeSMTP, "user", user),
@@ -469,6 +471,17 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(body["user"]["role"], "admin")
         settings = self.client.get("/api/settings").get_json()["settings"]
         self.assertEqual(settings["smtp_user"], "")
+        again = self.client.post("/api/auth/register", json={
+            "name": "محمد", "phone": "9373211344", "email": "mhm.worker@gmail.com", "password": "secret1",
+        })
+        self.assertEqual(again.status_code, 200, again.get_json())
+        self.assertFalse(again.get_json()["needs_verify"])
+        self.assertEqual(again.get_json()["user"]["phone"], "09373211344")
+        wrong = self.client.post("/api/auth/register", json={
+            "name": "محمد", "phone": "09373211344", "email": "mhm.worker@gmail.com", "password": "otherpw",
+        })
+        self.assertEqual(wrong.status_code, 400)
+        self.assertIn("قبلاً ثبت شده", wrong.get_json()["error"])
         self.client.post("/api/auth/logout")
         self.login("mhm.worker@gmail.com", "secret1")
 

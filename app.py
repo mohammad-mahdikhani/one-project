@@ -1555,6 +1555,8 @@ def register():
     phone = norm_phone(payload.get("phone") or "")
     email = gmail_address(payload.get("email") or payload.get("gmail"))
     password = str(payload.get("password") or "")
+    if re.fullmatch(r"9\d{9}", phone):
+        phone = "0" + phone
     if not re.fullmatch(r"09\d{9}", phone):
         raise AppError("شماره موبایل معتبر نیست")
     if len(password) < 6 or len(password) > 100:
@@ -1564,26 +1566,40 @@ def register():
         phone_owner = conn.execute("SELECT * FROM users WHERE phone=?", (phone,)).fetchone()
         existing = conn.execute("SELECT * FROM users WHERE lower(email)=?", (email,)).fetchone()
         if phone_owner and (not existing or phone_owner["id"] != existing["id"]):
-            raise AppError("این شماره قبلاً ثبت شده")
-        if existing and int(existing["email_verified"] or 0):
-            raise AppError("این جیمیل قبلاً ثبت شده. وارد شوید یا رمز را بازیابی کنید.")
-        if existing:
-            conn.execute(
-                "UPDATE users SET name=?, phone=?, password_hash=? WHERE id=?",
-                (name, phone, hash_pw(password), existing["id"]),
-            )
+            if not check_pw(password, phone_owner["password_hash"]):
+                raise AppError("این شماره قبلاً ثبت شده. با همان رمز از صفحه ورود وارد شوید.")
+            user_id = phone_owner["id"]
+            reopen = True
+        elif existing and int(existing["email_verified"] or 0):
+            if not check_pw(password, existing["password_hash"]):
+                raise AppError("این جیمیل قبلاً ثبت شده. با همان رمز از صفحه ورود وارد شوید.")
             user_id = existing["id"]
+            reopen = True
         else:
-            others = conn.execute("SELECT COUNT(*) AS c FROM users WHERE phone<>?", (INITIAL_PHONE,)).fetchone()["c"]
-            role = "admin" if settings.get("must_change_password") == "1" and others == 0 else "cashier"
-            cur = conn.execute(
-                """INSERT INTO users (name, phone, email, password_hash, role, email_verified, created_at)
-                   VALUES (?,?,?,?,?,0,?)""",
-                (name, phone, email, hash_pw(password), role, iso()),
-            )
-            user_id = cur.lastrowid
-        if smtp_ready(settings):
-            send_gmail_code(conn, settings, email, user_id, "verify")
+            reopen = False
+            if existing:
+                conn.execute(
+                    "UPDATE users SET name=?, phone=?, password_hash=? WHERE id=?",
+                    (name, phone, hash_pw(password), existing["id"]),
+                )
+                user_id = existing["id"]
+            else:
+                others = conn.execute("SELECT COUNT(*) AS c FROM users WHERE phone<>?", (INITIAL_PHONE,)).fetchone()["c"]
+                role = "admin" if settings.get("must_change_password") == "1" and others == 0 else "cashier"
+                cur = conn.execute(
+                    """INSERT INTO users (name, phone, email, password_hash, role, email_verified, created_at)
+                       VALUES (?,?,?,?,?,0,?)""",
+                    (name, phone, email, hash_pw(password), role, iso()),
+                )
+                user_id = cur.lastrowid
+        mailed = False
+        if not reopen and smtp_ready(settings):
+            try:
+                send_gmail_code(conn, settings, email, user_id, "verify")
+                mailed = True
+            except Exception:
+                mailed = False
+        if mailed:
             return jsonify(ok=True, email=email, needs_verify=True, delivery="email")
         conn.execute("UPDATE users SET email_verified=1 WHERE id=?", (user_id,))
         fresh = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()

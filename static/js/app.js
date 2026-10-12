@@ -100,6 +100,11 @@ function toast(message) {
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => el.classList.remove("show"), 8000);
 }
+function hideToast() {
+  const el = document.getElementById("toast");
+  if (el) el.classList.remove("show");
+  clearTimeout(toast.timer);
+}
 async function api(path, { method = "GET", body, form } = {}) {
   const opts = { method, credentials: "same-origin" };
   if (form) opts.body = form;
@@ -305,7 +310,7 @@ function authHtml() {
       <div class="field"><label>نام</label><input name="name" required value="${esc(draft.name || "")}"></div>
       <div class="field"><label>موبایل</label><input class="ltr" name="phone" required placeholder="09..." value="${esc(draft.phone || "")}"></div>
       <div class="field"><label>جیمیل</label><input class="ltr" name="email" type="email" required placeholder="name@gmail.com" value="${esc(draft.email || "")}"></div>
-      <div class="field"><label>رمز</label><input type="password" name="password" minlength="6" required value="${esc(draft.password || "")}"></div>
+      <div class="field"><label>رمز</label><input type="password" name="password" required value="${esc(draft.password || "")}"></div>
       <button class="btn primary block" type="submit">ساخت حساب</button>
       <button class="btn block" type="button" data-act="show-login">بازگشت</button>
     </form></div>`;
@@ -628,9 +633,9 @@ function settingsHtml() {
       <button type="button" class="btn" data-act="test-setting" data-kind="sms">پیام آزمایشی</button>
     </section>
     <section class="card"><h2 class="section-title">جیمیل، اختیاری</h2>
-      ${field("smtp_user", "آدرس جیمیل فروشگاه")}${field("smtp_password", "رمز جیمیل", "password")}
+      ${field("smtp_user", "آدرس جیمیل فروشگاه")}${field("smtp_password", "رمز برنامه گوگل", "password")}
       <button type="button" class="btn" data-act="test-setting" data-kind="email">ایمیل آزمایشی</button>
-      <p class="hint">خالی بماند. ساخت حساب و ورود بدون این خانه‌ها و بدون هاست انجام می‌شود.</p>
+      <p class="hint">فقط برای فرستادن کد تأیید و بازیابی رمز لازم است: آدرس جیمیل فروشگاه و رمز برنامه گوگل. رمز ورود معمولی جیمیل قبول نمی‌شود. هاست لازم نیست. اگر خالی بماند، ساخت حساب باز می‌شود و ایمیلی فرستاده نمی‌شود.</p>
     </section>
     <section class="card"><h2 class="section-title">جای فایل‌های آپدیت</h2>
       <p class="hint">نسخه نصب‌شده: ${esc(state.update?.current || "")}. دفترچی این آدرس را می‌خواند:</p>
@@ -723,6 +728,7 @@ async function onSubmit(event) {
         const result = await api("/api/auth/login", { method: "POST", body: data });
         state.user = result.user;
         state.mustChange = result.must_change_password;
+        hideToast();
         await navigate("dashboard");
       } catch (err) {
         if (err.data?.needs_verify) {
@@ -745,6 +751,7 @@ async function onSubmit(event) {
       } else {
         state.user = result.user;
         state.mustChange = result.must_change_password;
+        hideToast();
         await navigate("dashboard");
       }
     } else if (act === "verify") {
@@ -922,7 +929,8 @@ async function submitSale(method, posRef) {
 
 async function onClick(event) {
   const el = event.target.closest("[data-act]");
-  if (!el || el.closest("form[data-act]") && el.type === "submit") return;
+  if (!el || el.tagName === "FORM") return;
+  if (el.closest("form[data-act]") && el.type === "submit") return;
   if (el.dataset.act === "stop") { event.stopPropagation(); return; }
   const act = el.dataset.act;
   if (act === "close-modal") { state.modal = null; render(); return; }
