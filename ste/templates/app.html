@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>استی — خزش قیمت تلگرام و تطبیق با سایت</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <p class="eyebrow">مثل ترب و باسلام، برای فروشگاه خودتان</p>
+      <h1>استی</h1>
+      <p class="lead">قیمت را از <b>کانال تلگرام</b> تامین‌کننده می‌خواند، با اسم و کد کالای سایت جفت می‌کند و همان قیمت را روی فروشگاه می‌گذارد. اکسل و PDF هم همان مسیر را می‌روند.</p>
+    </div>
+    <a class="ghost" href="/list" target="_blank">لیست عمومی</a>
+  </header>
+
+  <main>
+    <section class="panel">
+      <div class="tabs">
+        <button type="button" class="tab on" data-tab="telegram">کانال تلگرام</button>
+        <button type="button" class="tab" data-tab="file">اکسل / PDF</button>
+      </div>
+
+      <form id="telegram-form" class="tab-pane">
+        <div class="controls">
+          <label>کانال تامین‌کننده
+            <input id="channel" name="channel" dir="ltr" placeholder="@channel یا demo">
+          </label>
+          <label>مقصد تطبیق
+            <select id="source" name="source">
+              <option value="local">کاتالوگ استی</option>
+              <option value="woo">فروشگاه ووکامرس</option>
+            </select>
+          </label>
+          <label>صفحه خزش
+            <input id="pages" type="number" min="1" max="6" value="3">
+          </label>
+          <button type="submit" class="primary">خزش کانال و تطبیق</button>
+        </div>
+        <div class="controls">
+          <label class="check"><input type="checkbox" id="accept_suggested"> پیشنهادهای اسمی را هم اعمال کن</label>
+          <label class="check"><input type="checkbox" id="create_missing"> کالاهایی که روی سایت نیست بساز</label>
+        </div>
+        <p class="muted">فقط کانال عمومی خوانده می‌شود (صفحه t.me/s). استی از هر پیام، کد، اسم و قیمت مصرف‌کننده را درمی‌آورد؛ اگر کد روی سایت نبود، اسم را مثل ترب نرمال و نزدیک‌یابی می‌کند.</p>
+      </form>
+
+      <form id="upload-form" class="tab-pane hidden">
+        <label class="drop" id="drop">
+          <input id="file" name="file" type="file" accept=".xlsx,.xlsm,.csv,.pdf">
+          <strong>فایل لیست قیمت را اینجا بگذارید</strong>
+          <span>xlsx ، csv یا PDF آکواجوی</span>
+        </label>
+        <div class="controls">
+          <button type="submit" class="primary">پیش‌نمایش تطابق</button>
+          <a class="ghost" href="/api/template">دانلود نمونه اکسل</a>
+        </div>
+        <p id="file-name" class="muted"></p>
+      </form>
+    </section>
+
+    <section id="messages" class="panel hidden">
+      <h2>پیام‌های کانال</h2>
+      <div id="message-list" class="list"></div>
+    </section>
+
+    <section id="stats" class="stats hidden"></section>
+    <section id="results" class="panel hidden">
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>وضعیت</th>
+              <th>کد</th>
+              <th>نام در کانال / شیت</th>
+              <th>قیمت کانال</th>
+              <th>کالای سایت</th>
+              <th>قیمت سایت</th>
+              <th>اختلاف</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="actions">
+        <button id="apply" class="primary" type="button">اعمال قیمت‌ها روی سایت</button>
+        <p id="apply-note" class="muted"></p>
+      </div>
+    </section>
+
+    <section class="split">
+      <article class="panel">
+        <h2>کالاهای کاتالوگ</h2>
+        <div id="products" class="list"></div>
+      </article>
+      <article class="panel">
+        <h2>اتصال ووکامرس</h2>
+        <form id="settings-form" class="stack">
+          <label>آدرس سایت<input name="wp_url" dir="ltr" placeholder="https://example.com"></label>
+          <label>کلید<input name="woo_key" dir="ltr"></label>
+          <label>سکرت<input name="woo_secret" dir="ltr" type="password"></label>
+          <button class="ghost" type="submit">ذخیره تنظیمات</button>
+          <p id="settings-note" class="muted">اگر مقصد را ووکامرس بگذارید، استی کالای زنده سایت را می‌خواند و قیمت همان‌ها را عوض می‌کند.</p>
+        </form>
+      </article>
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>
