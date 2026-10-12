@@ -538,7 +538,7 @@ class DaftarchiTest(unittest.TestCase):
         try:
             appmod.http_request = newer
             body = self.client.get("/api/update").get_json()
-            self.assertEqual(body["current"], "1.0.1")
+            self.assertEqual(body["current"], appmod.APP_VERSION)
             self.assertTrue(body["update"])
             self.assertTrue(body["available"])
             self.assertEqual(body["url"], "https://webakery.ir/daftarchi/Daftarchi-Setup.exe")
@@ -554,6 +554,21 @@ class DaftarchiTest(unittest.TestCase):
             self.assertEqual(down["manifest"], "https://webakery.ir/daftarchi/version.json")
         finally:
             appmod.http_request = original
+
+    def test_installer_overlays_existing_install(self):
+        self.assertEqual(appmod.APP_VERSION, "1.0.2")
+        text = Path("/workspace/windows/installer/installer.nsi").read_text(encoding="utf-8")
+        self.assertNotIn("MUI_PAGE_DIRECTORY", text)
+        self.assertIn("Call StopDaftarchi", text)
+        self.assertIn('RMDir /r "$INSTDIR\\static"', text)
+        self.assertIn('RMDir /r "$INSTDIR\\windows"', text)
+        self.assertNotIn('RMDir /r "$INSTDIR\\data"', text)
+        self.assertIn("پوشه data اگر فروش داشته باشد خالی نیست و پاک نمی‌شود", text)
+        self.assertIn("همان نسخه را به‌روز می‌کند", text)
+        stop = Path("/workspace/windows/installer/stop-daftarchi.ps1").read_text(encoding="utf-8")
+        self.assertIn("Stop-Process", stop)
+        boot = self.client.get("/api/auth/bootstrap").get_json()
+        self.assertEqual(boot["version"], "1.0.2")
 
 
 if __name__ == "__main__":

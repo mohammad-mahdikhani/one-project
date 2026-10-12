@@ -34,17 +34,54 @@ def open_browser(url: str):
         time.sleep(0.25)
 
 
+def running_version(port: int) -> str:
+    try:
+        import json
+        import urllib.request
+
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/health", timeout=1) as res:
+            return str(json.load(res).get("version") or "")
+    except Exception:
+        return ""
+
+
+def stop_port(port: int) -> None:
+    if os.name != "nt":
+        return
+    import subprocess
+
+    try:
+        out = subprocess.check_output(["netstat", "-ano"], text=True, errors="ignore")
+    except Exception:
+        return
+    pids = set()
+    needle = f":{port}"
+    for line in out.splitlines():
+        if needle in line and "LISTENING" in line.upper():
+            pid = line.split()[-1]
+            if pid.isdigit() and pid not in {"0", str(os.getpid())}:
+                pids.add(pid)
+    for pid in pids:
+        subprocess.run(["taskkill", "/F", "/PID", pid], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def main():
     port = int(os.environ.get("PORT", "8080"))
     url = f"http://127.0.0.1:{port}"
     log = Path(os.environ.get("TEMP", str(HERE))) / "daftarchi-run.log"
     try:
-        if port_open("127.0.0.1", port):
-            print(f"Daftarchi already running at {url}")
-            webbrowser.open(url)
-            return
-
         import app as appmod
+
+        if port_open("127.0.0.1", port):
+            if running_version(port) == appmod.APP_VERSION:
+                print(f"Daftarchi already running at {url}")
+                webbrowser.open(url)
+                return
+            stop_port(port)
+            time.sleep(0.6)
+            if port_open("127.0.0.1", port):
+                webbrowser.open(url)
+                return
 
         threading.Thread(target=open_browser, args=(url,), daemon=True).start()
         print("Daftarchi offline mode")

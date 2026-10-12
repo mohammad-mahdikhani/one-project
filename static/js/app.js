@@ -279,7 +279,7 @@ async function addByBarcode(code) {
 
 function updateBanner() {
   if (!state.update?.update) return "";
-  return `<div class="banner">نسخه ${esc(state.update.version)} آماده است.
+  return `<div class="banner">نسخه ${esc(state.update.version)} آماده است. دانلود کنید و روی همین دفترچی نصب کنید. فروش و حساب‌ها می‌مانند.
     <a class="btn" href="${esc(state.update.url)}" target="_blank" rel="noopener">دانلود نصب‌کننده</a>
     ${state.update.notes ? `<div class="hint">${esc(state.update.notes)}</div>` : ""}
   </div>`;
@@ -351,6 +351,7 @@ function authHtml() {
     <button class="btn block" type="button" data-act="show-forgot">رمز را فراموش کرده‌ام</button>
     ${updateBanner()}
     ${initial}
+    <p class="hint">نسخه ${esc(state.bootstrap?.version || state.update?.current || "")}</p>
   </form></div>`;
 }
 function logo() {
@@ -643,7 +644,7 @@ function settingsHtml() {
       <p class="hint">روی هاست، کنار پوشه wp-admin، پوشه daftarchi را بسازید و فقط همین دو فایل را داخلش بگذارید:</p>
       <p class="ltr">version.json</p>
       <p class="ltr">Daftarchi-Setup.exe</p>
-      <p class="hint">اگر اینترنت قطع باشد فروشگاه مثل قبل کار می‌کند. نصب نسخه جدید پوشه اطلاعات را پاک نمی‌کند.</p>
+      <p class="hint">نصب‌کننده را دانلود کنید و روی همین رایانه اجرا کنید. نسخه قبلی را از ویندوز حذف نکنید. فایل جدید روی همان پوشه می‌نشیند و پوشه data پاک نمی‌شود.</p>
     </section>
     <button class="btn primary" type="submit">ذخیره تنظیمات</button>
   </form>

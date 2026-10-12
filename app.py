@@ -91,7 +91,7 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.1"
+APP_VERSION = "1.0.2"
 UPDATE_MANIFEST_URL = "https://webakery.ir/daftarchi/version.json"
 SMS_PROVIDERS = {"internal", "kavenegar", "melipayamak"}
 BOOL_KEYS = {"gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock"}
@@ -1520,8 +1520,8 @@ def bootstrap():
         flag = settings.get("must_change_password") == "1"
         ready = smtp_ready(settings)
     if flag:
-        return jsonify(initial=True, phone=INITIAL_PHONE, password=INITIAL_PASSWORD, smtp_ready=ready)
-    return jsonify(initial=False, smtp_ready=ready)
+        return jsonify(initial=True, phone=INITIAL_PHONE, password=INITIAL_PASSWORD, smtp_ready=ready, version=APP_VERSION)
+    return jsonify(initial=False, smtp_ready=ready, version=APP_VERSION)
 
 
 @app.post("/api/auth/login")
