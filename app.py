@@ -1555,7 +1555,6 @@ def register():
     phone = norm_phone(payload.get("phone") or "")
     email = gmail_address(payload.get("email") or payload.get("gmail"))
     password = str(payload.get("password") or "")
-    app_password = str(payload.get("app_password") or "").replace(" ", "").strip()
     if not re.fullmatch(r"09\d{9}", phone):
         raise AppError("شماره موبایل معتبر نیست")
     if len(password) < 6 or len(password) > 100:
@@ -1568,23 +1567,9 @@ def register():
             raise AppError("این شماره قبلاً ثبت شده")
         if existing and int(existing["email_verified"] or 0):
             raise AppError("این جیمیل قبلاً ثبت شده. وارد شوید یا رمز را بازیابی کنید.")
-        if not smtp_ready(settings):
-            if len(app_password) < 8:
-                raise AppError(
-                    "رمز برنامه جیمیل لازم است. زیر رمز حساب، رمز برنامه (App Password) همان جیمیل را بنویسید. رمز ورود معمولی جیمیل قبول نیست."
-                )
-            conn.execute(
-                "INSERT INTO settings (key, value) VALUES ('smtp_user', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (email,),
-            )
-            conn.execute(
-                "INSERT INTO settings (key, value) VALUES ('smtp_password', ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
-                (app_password,),
-            )
-            settings = get_settings(conn)
         if existing:
             conn.execute(
-                "UPDATE users SET name=?, phone=?, password_hash=?, email_verified=0 WHERE id=?",
+                "UPDATE users SET name=?, phone=?, password_hash=? WHERE id=?",
                 (name, phone, hash_pw(password), existing["id"]),
             )
             user_id = existing["id"]
@@ -1597,8 +1582,18 @@ def register():
                 (name, phone, email, hash_pw(password), role, iso()),
             )
             user_id = cur.lastrowid
-        send_gmail_code(conn, settings, email, user_id, "verify")
-    return jsonify(ok=True, email=email, delivery="email")
+        if smtp_ready(settings):
+            send_gmail_code(conn, settings, email, user_id, "verify")
+            return jsonify(ok=True, email=email, needs_verify=True, delivery="email")
+        conn.execute("UPDATE users SET email_verified=1 WHERE id=?", (user_id,))
+        fresh = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        clear_initial_secret(conn, fresh)
+        flag = get_settings(conn).get("must_change_password") == "1"
+        user = public_user(fresh)
+    session.clear()
+    session["uid"] = user_id
+    session.permanent = True
+    return jsonify(ok=True, email=email, needs_verify=False, delivery="local", user=user, must_change_password=flag)
 
 
 @app.post("/api/auth/verify")
@@ -1653,9 +1648,13 @@ def attach_email():
         ).fetchone()
         if other:
             raise AppError("این جیمیل برای کاربر دیگری است")
-        conn.execute("UPDATE users SET email=?, email_verified=0 WHERE id=?", (email, user["id"]))
-        send_gmail_code(conn, get_settings(conn), email, user["id"], "verify")
-    return jsonify(ok=True, email=email)
+        settings = get_settings(conn)
+        if smtp_ready(settings):
+            conn.execute("UPDATE users SET email=?, email_verified=0 WHERE id=?", (email, user["id"]))
+            send_gmail_code(conn, settings, email, user["id"], "verify")
+            return jsonify(ok=True, email=email, needs_verify=True)
+        conn.execute("UPDATE users SET email=?, email_verified=1 WHERE id=?", (email, user["id"]))
+    return jsonify(ok=True, email=email, needs_verify=False)
 
 
 @app.post("/api/auth/logout")
@@ -1700,9 +1699,13 @@ def forgot():
         if "@" in ident:
             if not user["email"]:
                 raise AppError("برای این حساب جیمیل ثبت نشده")
-            send_gmail_code(conn, settings, user["email"], user["id"], "reset")
-            status, detail, channel = "sent", "جیمیل", "email"
-            code = None
+            if smtp_ready(settings):
+                send_gmail_code(conn, settings, user["email"], user["id"], "reset")
+                status, detail, channel = "sent", "جیمیل", "email"
+                code = None
+            else:
+                code = store_code(conn, user["id"], "email")
+                status, detail, channel = "internal", "کد روی همین دستگاه ساخته شد", "email"
         else:
             code = store_code(conn, user["id"], "sms")
             text = f"کد بازیابی رمز دفترچی: {code}\nاین کد تا ۱۰ دقیقه معتبر است."

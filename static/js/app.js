@@ -300,15 +300,13 @@ function authHtml() {
   if (state.authView === "register") {
     return `<div class="auth"><form class="card auth-card" data-act="register">
       <div class="brand"><div class="mark">${logo()}</div><div><strong>ساخت حساب</strong><span>با جیمیل</span></div></div>
-      <p class="hint">کد شش‌رقمی به همین جیمیل فرستاده می‌شود. رمز برنامه را از حساب گوگل بسازید؛ رمز ورود جیمیل اینجا کار نمی‌کند.</p>
+      <p class="hint">نام، موبایل، جیمیل و رمز دفترچی کافی است. به هاست و حساب گوگل کاری نیست.</p>
       ${authProblem()}
       <div class="field"><label>نام</label><input name="name" required value="${esc(draft.name || "")}"></div>
       <div class="field"><label>موبایل</label><input class="ltr" name="phone" required placeholder="09..." value="${esc(draft.phone || "")}"></div>
       <div class="field"><label>جیمیل</label><input class="ltr" name="email" type="email" required placeholder="name@gmail.com" value="${esc(draft.email || "")}"></div>
-      <div class="field"><label>رمز ورود به دفترچی</label><input type="password" name="password" minlength="6" required value="${esc(draft.password || "")}"></div>
-      <div class="field"><label>رمز برنامه جیمیل</label><input class="ltr" type="password" name="app_password" autocomplete="off" placeholder="App Password" value="${esc(draft.app_password || "")}"></div>
-      <p class="hint">${state.bootstrap?.smtp_ready ? "جیمیل فرستنده قبلاً ذخیره شده. اگر کد می‌رسد، رمز برنامه را خالی بگذارید." : "بدون رمز برنامه، جیمیل کد را نمی‌فرستد و حساب ساخته نمی‌شود."}</p>
-      <button class="btn primary block" type="submit">ساخت حساب و دریافت کد</button>
+      <div class="field"><label>رمز</label><input type="password" name="password" minlength="6" required value="${esc(draft.password || "")}"></div>
+      <button class="btn primary block" type="submit">ساخت حساب</button>
       <button class="btn block" type="button" data-act="show-login">بازگشت</button>
     </form></div>`;
   }
@@ -629,10 +627,10 @@ function settingsHtml() {
       <label class="check"><input type="checkbox" name="sms_low_stock" ${checked("sms_low_stock")}>پیامک موجودی کم</label>
       <button type="button" class="btn" data-act="test-setting" data-kind="sms">پیام آزمایشی</button>
     </section>
-    <section class="card"><h2 class="section-title">جیمیل فرستنده کد تأیید</h2>
-      ${field("smtp_user", "آدرس جیمیل فروشگاه")}${field("smtp_password", "رمز برنامه جیمیل", "password")}
+    <section class="card"><h2 class="section-title">جیمیل، اختیاری</h2>
+      ${field("smtp_user", "آدرس جیمیل فروشگاه")}${field("smtp_password", "رمز جیمیل", "password")}
       <button type="button" class="btn" data-act="test-setting" data-kind="email">ایمیل آزمایشی</button>
-      <p class="hint">کد ساخت حساب، تأیید جیمیل و بازیابی رمز از همین آدرس فرستاده می‌شود. در جیمیل یک App Password بسازید؛ رمز ورود معمولی قبول نیست. فاصله‌های رمز برنامه موقع ارسال حذف می‌شوند.</p>
+      <p class="hint">خالی بماند. ساخت حساب و ورود بدون این خانه‌ها و بدون هاست انجام می‌شود.</p>
     </section>
     <section class="card"><h2 class="section-title">جای فایل‌های آپدیت</h2>
       <p class="hint">نسخه نصب‌شده: ${esc(state.update?.current || "")}. دفترچی این آدرس را می‌خواند:</p>
@@ -686,7 +684,7 @@ function modalHtml() {
     inner = `<div id="print-area"><h2>دفترچی</h2><p>فاکتور ${num(sale.id)} · ${esc(sale.at_jalali)}</p><p>${esc(sale.customer_name || "")} ${esc(sale.customer_phone || "")}</p><table>${modal.items.map((item) => `<tr><td>${esc(item.name)} × ${num(item.qty)}</td><td class="num">${money(item.line_total)}</td></tr>`).join("")}</table><p>تخفیف ${money(sale.discount)}</p><p><strong>قابل پرداخت ${money(sale.payable)}</strong></p><p>${PAY[sale.payment_method] || ""}</p></div><button type="button" class="btn" data-act="print">چاپ</button>`;
   }
   if (modal.type === "password") inner = `<form data-act="change-password"><h2 class="section-title">تغییر رمز</h2><div class="field"><label>رمز فعلی</label><input type="password" name="current" required></div><div class="field"><label>رمز جدید</label><input type="password" name="password" minlength="6" required></div><button class="btn primary" type="submit">ذخیره</button></form>
-    <form data-act="attach-email"><h2 class="section-title">ورود با جیمیل</h2><p class="hint">کد تأیید به همین جیمیل می‌رود. تا تأیید نشود، ورود با جیمیل باز نمی‌شود. ورود با موبایل مدیر همچنان کار می‌کند.</p><div class="field"><label>جیمیل</label><input class="ltr" name="email" type="email" value="${esc(state.user.email || "")}" required placeholder="name@gmail.com"></div><button class="btn primary" type="submit">فرستادن کد</button></form>
+    <form data-act="attach-email"><h2 class="section-title">ورود با جیمیل</h2><p class="hint">همین جیمیل را ذخیره کنید و بعد با آن وارد شوید.</p><div class="field"><label>جیمیل</label><input class="ltr" name="email" type="email" value="${esc(state.user.email || "")}" required placeholder="name@gmail.com"></div><button class="btn primary" type="submit">ذخیره جیمیل</button></form>
     <form data-act="verify-email"><div class="field"><label>کد ۶ رقمی جیمیل</label><input class="ltr" name="code" inputmode="numeric" required></div><button class="btn" type="submit">تأیید جیمیل</button></form>`;
   return `<div class="modal-back" data-act="close-modal"><div class="modal card" data-act="stop"><div class="row-actions"><button type="button" class="btn" data-act="close-modal">بستن</button></div>${inner}</div></div>`;
 }
@@ -739,10 +737,16 @@ async function onSubmit(event) {
     } else if (act === "register") {
       const result = await api("/api/auth/register", { method: "POST", body: data });
       state.authError = "";
-      state.pendingEmail = result.email;
-      state.verifyNote = "کد شش‌رقمی به جیمیل فرستاده شد. صندوق ورودی و هرزنامه را ببینید.";
-      state.authView = "verify";
-      render();
+      if (result.needs_verify) {
+        state.pendingEmail = result.email;
+        state.verifyNote = "کد شش‌رقمی به جیمیل فرستاده شد. صندوق ورودی و هرزنامه را ببینید.";
+        state.authView = "verify";
+        render();
+      } else {
+        state.user = result.user;
+        state.mustChange = result.must_change_password;
+        await navigate("dashboard");
+      }
     } else if (act === "verify") {
       await api("/api/auth/verify", { method: "POST", body: { ident: data.ident, code: data.code } });
       state.authView = "login";
@@ -751,8 +755,8 @@ async function onSubmit(event) {
     } else if (act === "attach-email") {
       const result = await api("/api/auth/email", { method: "POST", body: { email: data.email } });
       state.user.email = result.email;
-      state.user.email_verified = 0;
-      toast("کد تأیید به جیمیل فرستاده شد");
+      state.user.email_verified = result.needs_verify ? 0 : 1;
+      toast(result.needs_verify ? "کد به جیمیل فرستاده شد" : "جیمیل ذخیره شد");
       render();
     } else if (act === "verify-email") {
       await api("/api/auth/verify", { method: "POST", body: { ident: state.user.email, code: data.code } });
