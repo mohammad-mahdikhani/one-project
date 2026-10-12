@@ -91,9 +91,19 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.3"
-UPDATE_MANIFEST_URL = "https://webakery.ir/daftarchi/version.json"
-HOST_MAIL_URL = "https://webakery.ir/daftarchi/mail.php"
+APP_VERSION = "1.0.4"
+UPDATE_MANIFEST_URLS = (
+    "https://webakery.ir/daftarchi/version.json",
+    "https://webakery.ir/license-server/version.json",
+    "https://webakery.ir/version.json",
+)
+UPDATE_MANIFEST_URL = UPDATE_MANIFEST_URLS[0]
+HOST_MAIL_URLS = (
+    "https://webakery.ir/daftarchi/mail.php",
+    "https://webakery.ir/license-server/mail.php",
+    "https://webakery.ir/mail.php",
+)
+HOST_MAIL_URL = HOST_MAIL_URLS[0]
 HOST_MAIL_KEY = "daftarchi-webakery-mail"
 SMS_PROVIDERS = {"internal", "kavenegar", "melipayamak"}
 BOOL_KEYS = {"gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock"}
@@ -852,8 +862,9 @@ def explain_host_mail(detail: str) -> str:
     low = text.lower()
     if "404" in low:
         return (
-            "فایل mail.php روی هاست نیست. از گیت‌هاب دانلود کنید و در File Manager همین‌جا بگذارید: "
-            "public_html/daftarchi/mail.php"
+            "پوشه daftarchi روی سایت باز نمی‌شود. فایل mail.php را کپی کنید داخل پوشه license-server "
+            "که از قبل در public_html کنار wp-admin است. سپس https://webakery.ir/license-server/mail.php "
+            "باید ok و daftarchi-mail نشان بدهد."
         )
     if "اتصال" in text or "timed out" in low or "timeout" in low or "unreachable" in low:
         return "اتصال به هاست وب‌بیکری برقرار نشد. تأیید حساب و بازیابی رمز بدون هاست ممکن نیست."
@@ -865,29 +876,33 @@ def explain_host_mail(detail: str) -> str:
     return f"ارسال کد از هاست به جیمیل ناموفق بود: {text[:180]}"
 
 
+def host_mail_hit(method: str, payload=None, timeout: int = 4):
+    last_status, last_body = 404, {"error": "HTTP 404"}
+    for url in HOST_MAIL_URLS:
+        try:
+            status, body = http_request(method, url, payload=payload, timeout=timeout)
+        except AppError as exc:
+            last_status, last_body = 502, {"error": str(exc)}
+            continue
+        last_status, last_body = status, body
+        if status < 400 and isinstance(body, dict) and body.get("service") == "daftarchi-mail":
+            return url, status, body
+    return HOST_MAIL_URLS[-1], last_status, last_body
+
+
 def host_mail_ready() -> bool:
-    try:
-        status, body = http_request("GET", HOST_MAIL_URL, timeout=4)
-    except AppError:
-        return False
+    _url, status, body = host_mail_hit("GET", timeout=4)
     return status < 400 and isinstance(body, dict) and bool(body.get("ok")) and body.get("service") == "daftarchi-mail"
 
 
 def send_host_mail(recipient: str, subject: str, text: str) -> None:
-    try:
-        status, body = http_request(
-            "POST",
-            HOST_MAIL_URL,
-            payload={"key": HOST_MAIL_KEY, "to": recipient, "subject": subject, "text": text},
-            timeout=12,
-        )
-    except AppError as exc:
-        raise AppError(explain_host_mail(str(exc)), 502) from exc
+    payload = {"key": HOST_MAIL_KEY, "to": recipient, "subject": subject, "text": text}
+    url, status, body = host_mail_hit("POST", payload=payload, timeout=12)
     if status >= 400 or not isinstance(body, dict) or not body.get("ok"):
         detail = ""
         if isinstance(body, dict):
             detail = str(body.get("error") or "")
-        raise AppError(explain_host_mail(detail or f"HTTP {status}"), 502)
+        raise AppError(explain_host_mail(detail or f"HTTP {status} {url}"), 502)
 
 
 def store_code(conn, user_id: int, channel: str) -> str:
@@ -1522,11 +1537,19 @@ def update_info():
         "notes": "",
         "manifest": UPDATE_MANIFEST_URL,
     }
-    try:
-        status, body = http_request("GET", UPDATE_MANIFEST_URL, timeout=4)
-    except AppError:
+    status, body, manifest = 404, None, UPDATE_MANIFEST_URL
+    for candidate in UPDATE_MANIFEST_URLS:
+        try:
+            status, body = http_request("GET", candidate, timeout=4)
+        except AppError:
+            continue
+        manifest = candidate
+        if status < 400 and isinstance(body, dict) and body.get("version"):
+            break
+    else:
         return jsonify(quiet)
     if status >= 400 or not isinstance(body, dict):
+        quiet["manifest"] = manifest
         return jsonify(quiet)
     latest = str(body.get("version") or "").strip()
     url = str(body.get("url") or "").strip()
@@ -1540,7 +1563,7 @@ def update_info():
         version=latest,
         url=url,
         notes=notes,
-        manifest=UPDATE_MANIFEST_URL,
+        manifest=manifest,
     )
 
 

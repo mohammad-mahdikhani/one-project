@@ -527,7 +527,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.0.3")
+        self.assertEqual(appmod.APP_VERSION, "1.0.4")
         text = Path("/workspace/windows/installer/installer.nsi").read_text(encoding="utf-8")
         self.assertNotIn("MUI_PAGE_DIRECTORY", text)
         self.assertIn("Call StopDaftarchi", text)
@@ -547,7 +547,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.0.3")
+        self.assertEqual(boot["version"], "1.0.4")
         self.assertTrue(boot["host_mail"])
 
 
