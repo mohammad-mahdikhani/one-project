@@ -554,6 +554,10 @@ class DaftarchiTest(unittest.TestCase):
     def test_installer_overlays_existing_install(self):
         self.assertEqual(appmod.APP_VERSION, "1.0.6")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
+        bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
+        self.assertIn("pythonw.exe", bat)
+        self.assertIn("DAFTARCHI_DATA", bat)
+        self.assertNotIn("Daftarchi-Setup", bat)
         script = Path("/workspace/static/js/app.js").read_text(encoding="utf-8")
         self.assertIn("۷ روز رایگان فعال است", script)
         self.assertIn("async function buyLicense", script)
