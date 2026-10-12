@@ -12,7 +12,7 @@ from .matcher import match_rows
 from .normalize import format_money
 from .site_seed import SITE_PRODUCTS
 from .telegram import TelegramError, crawl_channel
-from .woo import WooError, create_product, fetch_products, push_price
+from .woo import WooError, create_product, fetch_products, push_price, site_connected, site_ready, test_connection
 
 ROOT = Path(__file__).resolve().parent
 APP = Flask(__name__, template_folder=str(ROOT / "templates"), static_folder=str(ROOT / "static"))
@@ -53,12 +53,33 @@ def serialize_result(result) -> dict:
     }
 
 
+def resolve_source(settings: dict, source: str | None) -> str:
+    if source in {"woo", "local"}:
+        return source
+    return "woo" if site_connected(settings) else "local"
+
+
 def load_source(settings: dict, source: str):
-    if source == "woo":
+    chosen = resolve_source(settings, source)
+    if chosen == "woo":
         return fetch_products(settings)
     with connect() as conn:
         seed_if_empty(conn, SITE_PRODUCTS)
         return list_products(conn)
+
+
+def site_status() -> dict:
+    with connect() as conn:
+        settings = get_settings(conn)
+    ready = site_ready(settings)
+    connected = site_connected(settings)
+    return {
+        "connected": connected,
+        "url": (settings.get("wp_url") or "").rstrip("/"),
+        "source": resolve_source(settings, settings.get("default_source")),
+        "telegram_channel": settings.get("telegram_channel") or "",
+        "has_keys": ready,
+    }
 
 
 @APP.get("/")
@@ -82,10 +103,47 @@ def api_products():
     return jsonify([serialize_product(item) for item in products])
 
 
+@APP.get("/api/site/status")
+def api_site_status():
+    return jsonify(site_status())
+
+
+@APP.post("/api/site/test")
+def api_site_test():
+    payload = request.get_json(silent=True) or {}
+    with connect() as conn:
+        if payload:
+            save_settings(conn, payload)
+        settings = get_settings(conn)
+    try:
+        info = test_connection(settings)
+    except WooError as exc:
+        with connect() as conn:
+            save_settings(conn, {"site_connected": "0", "default_source": "local"})
+        return jsonify(error=str(exc), connected=False), 502
+    with connect() as conn:
+        save_settings(conn, {"default_source": "woo", "site_connected": "1"})
+    return jsonify({**info, "connected": True, "source": "woo"})
+
+
+@APP.get("/api/site/products")
+def api_site_products():
+    with connect() as conn:
+        settings = get_settings(conn)
+    if not site_connected(settings):
+        return api_products()
+    try:
+        products = fetch_products(settings)
+    except WooError as exc:
+        return jsonify(error=str(exc)), 502
+    return jsonify([serialize_product(item) for item in products])
+
+
 @APP.get("/api/settings")
 def api_settings():
     with connect() as conn:
-        return jsonify(get_settings(conn))
+        settings = get_settings(conn)
+    return jsonify({**settings, **site_status()})
 
 
 @APP.post("/api/settings")
@@ -105,10 +163,11 @@ def api_template():
     )
 
 
-def preview_payload(rows, site_source: str) -> tuple[dict, list]:
+def preview_payload(rows, site_source: str | None) -> tuple[dict, list, str]:
     with connect() as conn:
         settings = get_settings(conn)
-    products = load_source(settings, site_source)
+    chosen = resolve_source(settings, site_source)
+    products = load_source(settings, chosen)
     results = match_rows(rows, products)
     counts = {
         "rows": len(results),
@@ -117,7 +176,7 @@ def preview_payload(rows, site_source: str) -> tuple[dict, list]:
         "create": sum(1 for item in results if item.action == "create"),
         "skip": sum(1 for item in results if item.action == "skip"),
     }
-    return counts, results
+    return counts, results, chosen
 
 
 @APP.post("/api/preview")
@@ -128,12 +187,12 @@ def api_preview():
     source = request.form.get("source") or "local"
     try:
         rows = read_upload(upload.filename or "list.xlsx", upload.read())
-        counts, results = preview_payload(rows, source)
+        counts, results, chosen = preview_payload(rows, source)
     except ValueError as exc:
         return jsonify(error=str(exc)), 400
     except WooError as exc:
         return jsonify(error=str(exc)), 502
-    return jsonify(counts=counts, results=[serialize_result(item) for item in results])
+    return jsonify(counts=counts, source=chosen, results=[serialize_result(item) for item in results])
 
 
 @APP.post("/api/telegram/crawl")
@@ -144,7 +203,7 @@ def api_telegram_crawl():
     try:
         pages = int(payload.get("pages") or 3)
         crawled = crawl_channel(channel, pages=pages)
-        counts, results = preview_payload(crawled["rows"], site_source)
+        counts, results, chosen = preview_payload(crawled["rows"], site_source)
     except (TelegramError, ValueError) as exc:
         return jsonify(error=str(exc)), 400
     except WooError as exc:
@@ -166,6 +225,7 @@ def api_telegram_crawl():
             for item in crawled["messages"][:40]
         ],
         counts=counts,
+        source=chosen,
         results=[serialize_result(item) for item in results],
     )
 
@@ -174,7 +234,9 @@ def api_telegram_crawl():
 def api_apply():
     payload = request.get_json(silent=True) or {}
     filename = str(payload.get("filename") or "list.xlsx")
-    source = payload.get("source") or "local"
+    with connect() as conn:
+        settings = get_settings(conn)
+    source = resolve_source(settings, payload.get("source"))
     accept_suggested = bool(payload.get("accept_suggested"))
     create_missing = bool(payload.get("create_missing"))
     rows_data = payload.get("results") or []

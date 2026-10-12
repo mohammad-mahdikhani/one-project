@@ -13,33 +13,64 @@ class WooError(RuntimeError):
     pass
 
 
-def _request(settings: dict, method: str, path: str, payload: dict | None = None) -> object:
+def site_ready(settings: dict) -> bool:
+    return bool((settings.get("wp_url") or "").strip() and (settings.get("woo_key") or "").strip() and (settings.get("woo_secret") or "").strip())
+
+
+def site_connected(settings: dict) -> bool:
+    return site_ready(settings) and str(settings.get("site_connected") or "") == "1"
+
+
+def _request(settings: dict, method: str, path: str, payload: dict | None = None, timeout: int = 30) -> tuple[object, dict]:
     base = (settings.get("wp_url") or "").rstrip("/")
     key = settings.get("woo_key") or ""
     secret = settings.get("woo_secret") or ""
     if not base or not key or not secret:
         raise WooError("آدرس فروشگاه و کلید ووکامرس را در تنظیمات بگذارید")
+    if not base.startswith("http://") and not base.startswith("https://"):
+        raise WooError("آدرس سایت باید با https:// شروع شود")
     url = f"{base}/wp-json/wc/v3/{path.lstrip('/')}"
     sep = "&" if "?" in url else "?"
     url = f"{url}{sep}consumer_key={key}&consumer_secret={secret}"
     body = None if payload is None else json.dumps(payload).encode("utf-8")
     request = Request(url, data=body, method=method, headers={"Content-Type": "application/json"})
     try:
-        with urlopen(request, timeout=30) as response:
+        with urlopen(request, timeout=timeout) as response:
             raw = response.read()
-            return json.loads(raw) if raw else {}
+            headers = {key.lower(): value for key, value in response.headers.items()}
+            return (json.loads(raw) if raw else {}), headers
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")[:240]
+        if "<" in detail or exc.code in {404, 401, 403}:
+            raise WooError(
+                "اتصال به ووکامرس برقرار نشد. آدرس سایت، کلید REST و دسترسی خواندن/نوشتن را چک کنید."
+            ) from exc
         raise WooError(f"ووکامرس پاسخ {exc.code} داد: {detail}") from exc
     except URLError as exc:
         raise WooError(f"اتصال به فروشگاه برقرار نشد: {exc.reason}") from exc
+
+
+def test_connection(settings: dict) -> dict:
+    body, headers = _request(settings, "GET", "products?per_page=1&status=any", timeout=12)
+    count = headers.get("x-wp-total")
+    sample = ""
+    if isinstance(body, list) and body:
+        sample = str(body[0].get("name") or "")
+        if not count:
+            count = "1"
+    return {
+        "ok": True,
+        "url": (settings.get("wp_url") or "").rstrip("/"),
+        "product_count": int(count or 0),
+        "sample": sample,
+    }
 
 
 def fetch_products(settings: dict, per_page: int = 100) -> list[Product]:
     page = 1
     items: list[Product] = []
     while True:
-        batch = _request(settings, "GET", f"products?per_page={per_page}&page={page}&status=any")
+        batch, _headers = _request(settings, "GET", f"products?per_page={per_page}&page={page}&status=any")
         if not isinstance(batch, list) or not batch:
             break
         for row in batch:
@@ -70,7 +101,7 @@ def push_price(settings: dict, product_id: int, price: int, sku: str | None = No
     payload = {"regular_price": str(price)}
     if sku:
         payload["sku"] = sku
-    body = _request(settings, "PUT", f"products/{product_id}", payload)
+    body, _headers = _request(settings, "PUT", f"products/{product_id}", payload)
     if not isinstance(body, dict):
         raise WooError("پاسخ ووکامرس نامعتبر بود")
     return body
@@ -80,7 +111,7 @@ def create_product(settings: dict, name: str, price: int, sku: str | None = None
     payload = {"name": name, "type": "simple", "regular_price": str(price), "status": "publish"}
     if sku:
         payload["sku"] = sku
-    body = _request(settings, "POST", "products", payload)
+    body, _headers = _request(settings, "POST", "products", payload)
     if not isinstance(body, dict) or not body.get("id"):
         raise WooError("ساخت کالا در ووکامرس انجام نشد")
     return body

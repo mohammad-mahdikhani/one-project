@@ -173,6 +173,8 @@ def save_settings(conn: sqlite3.Connection, payload: dict) -> dict:
         "accept_suggested",
         "telegram_channel",
         "telegram_pages",
+        "default_source",
+        "site_connected",
     }
     for key, value in payload.items():
         if key not in allowed:
