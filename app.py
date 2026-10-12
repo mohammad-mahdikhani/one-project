@@ -850,6 +850,11 @@ def explain_gmail(detail: str) -> str:
 def explain_host_mail(detail: str) -> str:
     text = str(detail or "")
     low = text.lower()
+    if "404" in low:
+        return (
+            "فایل mail.php روی هاست نیست. از گیت‌هاب دانلود کنید و در File Manager همین‌جا بگذارید: "
+            "public_html/daftarchi/mail.php"
+        )
     if "اتصال" in text or "timed out" in low or "timeout" in low or "unreachable" in low:
         return "اتصال به هاست وب‌بیکری برقرار نشد. تأیید حساب و بازیابی رمز بدون هاست ممکن نیست."
     if "mail" in low or "key" in low or "fields" in low or "تنظیم نشده" in text:
