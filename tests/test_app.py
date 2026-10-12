@@ -552,7 +552,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.0.6")
+        self.assertEqual(appmod.APP_VERSION, "1.0.7")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -577,6 +577,9 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
+        self.assertIn("1.0.7", run)
+        self.assertIn("ارسال به سامانه مودیان", script)
+        self.assertIn("moadian_sandbox", script)
         stop = Path("/workspace/windows/installer/stop-daftarchi.ps1").read_text(encoding="utf-8")
         self.assertIn("Stop-Process", stop)
         mail = Path("/workspace/site-updates/daftarchi/mail.php").read_text(encoding="utf-8")
@@ -588,11 +591,151 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.0.6")
+        self.assertEqual(boot["version"], "1.0.7")
         pay = Path("/workspace/site-updates/daftarchi/pay.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-pay", pay)
         self.assertIn("gateway.zibal.ir/v1/request", pay)
         self.assertTrue(boot["host_mail"])
+
+    def test_moadian_sends_encrypted_invoice_without_touching_books(self):
+        import base64
+        import json
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import padding, rsa
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+        import moadian
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        private_pem = key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        ).decode()
+        public_pem = key.public_key().public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        ).decode()
+        public_body = "".join(line for line in public_pem.splitlines() if "-----" not in line)
+        saved = self.client.put("/api/settings", json={
+            "moadian_fiscal_id": "A1B2C3",
+            "moadian_economic_code": "12345678901",
+            "moadian_private_key": private_pem,
+            "moadian_enabled": "1",
+            "moadian_sandbox": "1",
+            "moadian_vat": "10",
+        })
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        hidden = saved.get_json()["settings"]
+        self.assertEqual(hidden["moadian_private_key"], "")
+        self.assertEqual(hidden["moadian_key_saved"], "1")
+        self.assertNotIn("PRIVATE KEY", json.dumps(hidden))
+        bad_fiscal = self.client.put("/api/settings", json={"moadian_fiscal_id": "ABC"})
+        self.assertEqual(bad_fiscal.status_code, 400)
+        bad_product = self.client.post("/api/products", json={"name": "خراب", "price": 1000, "stock": 1, "tax_code": "123"})
+        self.assertEqual(bad_product.status_code, 400)
+
+        when = appmod.datetime(2026, 10, 13, 0, 30, tzinfo=appmod.TEHRAN)
+        taxid = moadian.generate_tax_id("A1B2C3", when, 7)
+        self.assertEqual(len(taxid), 22)
+        self.assertTrue(taxid.startswith("A1B2C3"))
+        self.assertEqual(taxid[11:21], moadian.invoice_serial_hex(7))
+        decimal = moadian.fiscal_to_number("A1B2C3") + f"{(when.date() - appmod.datetime(1970, 1, 1).date()).days:06d}" + f"{7:012d}"
+        self.assertTrue(moadian.verhoeff_valid(decimal + taxid[-1]))
+        self.assertEqual(moadian.normalize_json({"a": None, "b": ""}), "###")
+
+        self.open_register(0)
+        plain = self.add_product(name="بدون شناسه", barcode="222", price=5000)
+        coded = self.add_product(name="چای", barcode="333", price=10000, tax_code="2902230386252")
+        skipped = self.client.post("/api/sales", json={
+            "items": [{"product_id": plain["id"], "qty": 1}],
+            "payment_method": "cash",
+        })
+        self.assertEqual(skipped.status_code, 200, skipped.get_json())
+        self.assertEqual(skipped.get_json()["sale"]["status"], "paid")
+        self.assertEqual(skipped.get_json()["sale"]["moadian_status"], "skipped")
+        self.assertIn("شناسه کالا", skipped.get_json()["sale"]["moadian_error"])
+
+        calls = []
+        original = appmod.http_request
+        real_random = moadian.os.urandom
+
+        def fixed_random(size):
+            if size == 32:
+                return b"\x11" * 32
+            if size == 16:
+                return b"\x22" * 16
+            return real_random(size)
+
+        def fake(method, url, payload=None, headers=None, form=None, timeout=12):
+            calls.append((url, payload, headers))
+            self.assertTrue(url.startswith("https://sandboxrc.tax.gov.ir/req/api/self-tsp/"))
+            if url.endswith("/sync/GET_SERVER_INFORMATION"):
+                self.assertEqual(payload["signature"], "")
+                self.assertNotIn("Authorization", headers or {})
+                return 200, {"result": {"data": {"publicKeys": [{"id": "org-key", "key": public_body}]}}}
+            if url.endswith("/sync/GET_TOKEN"):
+                self.assertTrue(payload["signature"])
+                self.assertNotIn("Authorization", headers or {})
+                return 200, {"result": {"data": {"token": "session-token"}}}
+            if url.endswith("/async/normal-enqueue"):
+                self.assertEqual(headers.get("Authorization"), "Bearer session-token")
+                packet = payload["packets"][0]
+                self.assertEqual(packet["packetType"], "INVOICE.V01")
+                self.assertEqual(packet["fiscalId"], "A1B2C3")
+                self.assertEqual(packet["encryptionKeyId"], "org-key")
+                self.assertTrue(packet["dataSignature"])
+                wrapped = base64.b64decode(packet["symmetricKey"])
+                key_hex = key.decrypt(
+                    wrapped,
+                    padding.OAEP(mgf=padding.MGF1(algorithm=hashes.SHA256()), algorithm=hashes.SHA256(), label=None),
+                ).decode()
+                raw_key = bytes.fromhex(key_hex)
+                blob = base64.b64decode(packet["data"])
+                xored = AESGCM(raw_key).decrypt(bytes.fromhex(packet["iv"]), blob, None)
+                plain_text = bytes(byte ^ raw_key[index % len(raw_key)] for index, byte in enumerate(xored))
+                invoice = json.loads(plain_text)
+                self.assertEqual(invoice["header"]["inty"], 2)
+                self.assertEqual(invoice["header"]["inp"], 1)
+                self.assertEqual(invoice["body"][0]["sstid"], "2902230386252")
+                self.assertEqual(invoice["body"][0]["fee"], 100000)
+                self.assertEqual(invoice["body"][0]["vra"], 10)
+                self.assertEqual(invoice["body"][0]["vam"], 10000)
+                self.assertEqual(invoice["header"]["tbill"], 110000)
+                self.assertEqual(invoice["payments"][0]["pmt"], 3)
+                self.assertEqual(len(invoice["header"]["taxid"]), 22)
+                self.assertEqual(invoice["header"]["inno"], invoice["header"]["taxid"][11:21])
+                return 200, {"result": [{"uid": packet["uid"], "referenceNumber": "ref-100", "errorCode": None}]}
+            if url.endswith("/sync/INQUIRY_BY_REFERENCE_NUMBER"):
+                return 200, {"result": {"data": [{"status": "SUCCESS", "data": {"success": True, "error": []}}]}}
+            self.fail(url)
+
+        moadian.os.urandom = fixed_random
+        appmod.http_request = fake
+        try:
+            sent = self.client.post("/api/sales", json={
+                "items": [{"product_id": coded["id"], "qty": 1}],
+                "payment_method": "cash",
+            })
+            self.assertEqual(sent.status_code, 200, sent.get_json())
+            sale = sent.get_json()["sale"]
+            self.assertEqual(sale["status"], "paid")
+            self.assertEqual(sale["payable"], 10000)
+            self.assertEqual(sale["moadian_status"], "sent")
+            self.assertEqual(sale["moadian_reference"], "ref-100")
+            self.assertEqual(len(sale["moadian_taxid"]), 22)
+            books = self.accounts()
+            self.assertEqual(books["1000"]["amount"], 15000)
+            asked = self.client.post(f"/api/sales/{sale['id']}/moadian/inquiry", json={})
+            self.assertEqual(asked.status_code, 200, asked.get_json())
+            self.assertEqual(asked.get_json()["sale"]["moadian_status"], "success")
+            again = self.client.post(f"/api/sales/{sale['id']}/moadian", json={})
+            self.assertEqual(again.status_code, 200, again.get_json())
+            self.assertIn("قبلاً", again.get_json()["message"])
+            enqueue_count = sum(1 for url, _payload, _headers in calls if url.endswith("/async/normal-enqueue"))
+            self.assertEqual(enqueue_count, 1)
+        finally:
+            appmod.http_request = original
+            moadian.os.urandom = real_random
 
 
 if __name__ == "__main__":

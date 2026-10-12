@@ -53,6 +53,7 @@ HEADER_MAP = {
     "stock": "stock", "موجودی": "stock",
     "cost": "cost", "قیمت خرید": "cost",
     "image": "image", "تصویر": "image", "آدرس تصویر": "image",
+    "tax_code": "tax_code", "شناسه مودیان": "tax_code", "شناسه کالا": "tax_code", "sstid": "tax_code",
 }
 DEFAULT_SETTINGS = {
     "wp_url": "https://webakery.ir",
@@ -85,13 +86,19 @@ DEFAULT_SETTINGS = {
     "price_50y": "12000000",
     "cap_50y": "50",
     "must_change_password": "1",
+    "moadian_fiscal_id": "",
+    "moadian_economic_code": "",
+    "moadian_private_key": "",
+    "moadian_vat": "10",
+    "moadian_enabled": "0",
+    "moadian_sandbox": "1",
 }
 POS_PROVIDERS = {"manual", "saman", "behpardakht", "parsian", "irankish", "sepehr", "asanpardakht"}
 GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -112,7 +119,7 @@ HOST_PAY_URLS = (
 )
 HOST_MAIL_KEY = "daftarchi-webakery-mail"
 SMS_PROVIDERS = {"internal", "kavenegar", "melipayamak"}
-BOOL_KEYS = {"gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock"}
+BOOL_KEYS = {"gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock", "moadian_enabled", "moadian_sandbox"}
 SYSTEM_ACCOUNTS = [
     ("1000", "صندوق", "asset"),
     ("1010", "بانک", "asset"),
@@ -260,6 +267,15 @@ def clean_text(value, label: str, max_len: int, required: bool = False) -> str:
 def clean_code(value, label: str) -> str | None:
     text = clean_text(value, label, 64)
     return text or None
+
+
+def clean_tax_code(value) -> str | None:
+    text = re.sub(r"\D", "", str(value or "").translate(DIGITS))
+    if not text:
+        return None
+    if not re.fullmatch(r"\d{13}", text):
+        raise AppError("شناسه کالا/خدمت مودیان باید ۱۳ رقم باشد")
+    return text
 
 
 def clean_image(value) -> str | None:
@@ -500,6 +516,7 @@ def product_dict(row, threshold: int) -> dict:
         "image": row["image"] or "",
         "woo_id": row["woo_id"],
         "active": row["active"],
+        "tax_code": row["tax_code"] or "",
         "low": row["stock"] <= threshold,
     }
 
@@ -1364,6 +1381,31 @@ def save_settings(conn, payload: dict):
             stored = str(value or "internal")
             if stored not in SMS_PROVIDERS:
                 raise AppError("سامانه پیامک نامعتبر است")
+        elif key == "moadian_fiscal_id":
+            stored = clean_text(value, "شناسه حافظه مالیاتی", 6).upper()
+            if stored and not re.fullmatch(r"[A-Z0-9]{6}", stored):
+                raise AppError("شناسه یکتای حافظه مالیاتی ۶ کاراکتر است")
+        elif key == "moadian_economic_code":
+            stored = re.sub(r"\D", "", str(value or "").translate(DIGITS))
+            if stored and not re.fullmatch(r"\d{11,14}", stored):
+                raise AppError("کد اقتصادی باید ۱۱ تا ۱۴ رقم باشد")
+        elif key == "moadian_private_key":
+            stored = str(value or "").strip()
+            if not stored:
+                continue
+            if "PRIVATE KEY" not in stored or len(stored) > 8000:
+                raise AppError("کلید خصوصی مودیان معتبر نیست")
+            try:
+                from cryptography.hazmat.primitives import serialization
+                serialization.load_pem_private_key(stored.encode(), password=None)
+            except ImportError:
+                raise AppError("کتابخانه رمزنگاری روی این رایانه نیست. دفترچی را دوباره اجرا کنید.")
+            except Exception:
+                raise AppError("کلید خصوصی خوانده نشد. فایل pem کارپوشه را بچسبانید.")
+        elif key == "moadian_vat":
+            stored = str(parse_money(value or "10", "نرخ مالیات", allow_empty=True))
+            if int(stored) > 100:
+                raise AppError("نرخ مالیات تا ۱۰۰ است")
         else:
             stored = clean_text(value, key, 400)
             if key in {"wp_url", "gateway_callback"} and stored:
@@ -1593,6 +1635,13 @@ def init_db():
             conn.execute("ALTER TABLE licenses ADD COLUMN gateway_ref TEXT")
         if "pay_url" not in have:
             conn.execute("ALTER TABLE licenses ADD COLUMN pay_url TEXT")
+        product_cols = {row["name"] for row in conn.execute("PRAGMA table_info(products)")}
+        if "tax_code" not in product_cols:
+            conn.execute("ALTER TABLE products ADD COLUMN tax_code TEXT")
+        sale_cols = {row["name"] for row in conn.execute("PRAGMA table_info(sales)")}
+        for column in ("moadian_uid", "moadian_taxid", "moadian_reference", "moadian_status", "moadian_error"):
+            if column not in sale_cols:
+                conn.execute(f"ALTER TABLE sales ADD COLUMN {column} TEXT")
 
 
 @app.errorhandler(AppError)
@@ -1990,6 +2039,7 @@ def create_product():
     stock = parse_money(payload.get("stock"), "موجودی", allow_empty=True)
     sku = clean_code(payload.get("sku"), "کد")
     barcode = clean_code(payload.get("barcode"), "بارکد")
+    tax_code = clean_tax_code(payload.get("tax_code"))
     image = clean_image(payload.get("image"))
     with connect() as conn:
         existing = match_product(conn, barcode, sku)
@@ -1998,8 +2048,8 @@ def create_product():
         if existing:
             conn.execute(
                 """UPDATE products SET name=?, sku=?, barcode=?, price=?, cost=?, stock=?, image=COALESCE(?, image),
-                   active=1, updated_at=? WHERE id=?""",
-                (name, sku, barcode, price, cost, stock, image, iso(), existing["id"]),
+                   tax_code=?, active=1, updated_at=? WHERE id=?""",
+                (name, sku, barcode, price, cost, stock, image, tax_code, iso(), existing["id"]),
             )
             if price != existing["price"]:
                 log_stock(conn, existing["id"], "price", 0, existing["price"], price, "بازگشت از بایگانی", user["id"])
@@ -2008,9 +2058,9 @@ def create_product():
             product_id = existing["id"]
         else:
             cur = conn.execute(
-                """INSERT INTO products (name, sku, barcode, price, cost, stock, image, woo_id, active, created_at, updated_at)
-                   VALUES (?,?,?,?,?,?,?,NULL,1,?,?)""",
-                (name, sku, barcode, price, cost, stock, image, iso(), iso()),
+                """INSERT INTO products (name, sku, barcode, price, cost, stock, image, tax_code, woo_id, active, created_at, updated_at)
+                   VALUES (?,?,?,?,?,?,?,?,NULL,1,?,?)""",
+                (name, sku, barcode, price, cost, stock, image, tax_code, iso(), iso()),
             )
             product_id = cur.lastrowid
             if stock:
@@ -2034,10 +2084,11 @@ def update_product(pid: int):
         stock = parse_money(payload["stock"], "موجودی", allow_empty=True) if "stock" in payload else row["stock"]
         sku = clean_code(payload["sku"], "کد") if "sku" in payload else row["sku"]
         barcode = clean_code(payload["barcode"], "بارکد") if "barcode" in payload else row["barcode"]
+        tax_code = clean_tax_code(payload["tax_code"]) if "tax_code" in payload else row["tax_code"]
         image = clean_image(payload["image"]) if "image" in payload else row["image"]
         conn.execute(
-            """UPDATE products SET name=?, sku=?, barcode=?, price=?, cost=?, stock=?, image=?, updated_at=? WHERE id=?""",
-            (name, sku, barcode, price, cost, stock, image, iso(), pid),
+            """UPDATE products SET name=?, sku=?, barcode=?, price=?, cost=?, stock=?, image=?, tax_code=?, updated_at=? WHERE id=?""",
+            (name, sku, barcode, price, cost, stock, image, tax_code, iso(), pid),
         )
         if price != row["price"]:
             log_stock(conn, pid, "price", 0, row["price"], price, "تغییر قیمت", user["id"])
@@ -2065,8 +2116,8 @@ def product_template():
     book = Workbook()
     sheet = book.active
     sheet.title = "products"
-    sheet.append(["نام", "کد", "بارکد", "قیمت", "موجودی", "قیمت خرید", "تصویر"])
-    sheet.append(["چای ۵۰۰ گرمی", "TEA-500", "6260000000011", 45000, 12, 30000, ""])
+    sheet.append(["نام", "کد", "بارکد", "قیمت", "موجودی", "قیمت خرید", "تصویر", "شناسه مودیان"])
+    sheet.append(["چای ۵۰۰ گرمی", "TEA-500", "6260000000011", 45000, 12, 30000, "", ""])
     buf = BytesIO()
     book.save(buf)
     buf.seek(0)
@@ -2114,6 +2165,7 @@ def import_products():
                 sku = clean_code(data.get("sku"), "کد") if "sku" in fields else None
                 barcode = clean_code(data.get("barcode"), "بارکد") if "barcode" in fields else None
                 image = clean_image(data.get("image")) if data.get("image") else None
+                tax_code = clean_tax_code(data.get("tax_code")) if "tax_code" in fields else None
                 has_stock = "stock" in fields and data.get("stock") not in (None, "")
                 stock = parse_money(data.get("stock"), "موجودی", allow_empty=True) if has_stock else None
                 existing = None
@@ -2125,8 +2177,8 @@ def import_products():
                     new_stock = stock if stock is not None else existing["stock"]
                     conn.execute(
                         """UPDATE products SET name=?, sku=?, barcode=?, price=?, cost=?, stock=?, image=COALESCE(?, image),
-                           active=1, updated_at=? WHERE id=?""",
-                        (name, sku or existing["sku"], barcode or existing["barcode"], price, cost, new_stock, image, iso(), existing["id"]),
+                           tax_code=COALESCE(?, tax_code), active=1, updated_at=? WHERE id=?""",
+                        (name, sku or existing["sku"], barcode or existing["barcode"], price, cost, new_stock, image, tax_code, iso(), existing["id"]),
                     )
                     if price != existing["price"]:
                         log_stock(conn, existing["id"], "price", 0, existing["price"], price, "ورود اکسل", user["id"])
@@ -2137,9 +2189,9 @@ def import_products():
                 else:
                     initial = stock or 0
                     cur = conn.execute(
-                        """INSERT INTO products (name, sku, barcode, price, cost, stock, image, woo_id, active, created_at, updated_at)
-                           VALUES (?,?,?,?,?,?,?,NULL,1,?,?)""",
-                        (name, sku, barcode, price, cost, initial, image, iso(), iso()),
+                        """INSERT INTO products (name, sku, barcode, price, cost, stock, image, tax_code, woo_id, active, created_at, updated_at)
+                           VALUES (?,?,?,?,?,?,?,?,NULL,1,?,?)""",
+                        (name, sku, barcode, price, cost, initial, image, tax_code, iso(), iso()),
                     )
                     if initial:
                         log_stock(conn, cur.lastrowid, "adjust", initial, 0, initial, "ورود اکسل", user["id"])
@@ -2421,6 +2473,9 @@ def create_sale():
         notify_manager(settings, f"دفترچی: فروش {payable:,} تومان، فاکتور {sale_id}")
     if alerts and settings.get("sms_low_stock") == "1":
         notify_manager(settings, "دفترچی: موجودی کم شد: " + "، ".join(alerts))
+    maybe_send_moadian(sale_id)
+    with connect() as conn:
+        result = sale_payload(conn, sale_id)
     return jsonify(**result)
 
 
@@ -2481,6 +2536,9 @@ def confirm_sale(sale_id: int):
         notify_manager(settings, f"دفترچی: فروش درگاهی {result['sale']['payable']:,} تومان، فاکتور {sale_id}")
     if alerts and settings.get("sms_low_stock") == "1":
         notify_manager(settings, "دفترچی: موجودی کم شد: " + "، ".join(alerts))
+    maybe_send_moadian(sale_id)
+    with connect() as conn:
+        result = sale_payload(conn, sale_id)
     return jsonify(**result)
 
 
@@ -2976,6 +3034,7 @@ def pay_return():
                 if current and current["status"] == "pending":
                     finalize_sale(conn, sale["id"], sale["user_id"])
                     conn.execute("UPDATE sales SET gateway_ref=?, pos_ref=? WHERE id=?", (ref, ref, sale["id"]))
+            maybe_send_moadian(sale["id"])
             return pay_page("فاکتور پرداخت شد.", True)
     except AppError as exc:
         return pay_page(str(exc), False), exc.status
@@ -3022,13 +3081,20 @@ def send_sms():
     return jsonify(ok=status != "failed", status=status, detail=detail)
 
 
+def public_settings(data: dict) -> dict:
+    out = dict(data)
+    out.pop("must_change_password", None)
+    out["moadian_key_saved"] = "1" if out.get("moadian_private_key") else "0"
+    out["moadian_private_key"] = ""
+    return out
+
+
 @app.get("/api/settings")
 def get_settings_route():
     require_admin()
     with connect() as conn:
         data = get_settings(conn)
-    data.pop("must_change_password", None)
-    return jsonify(settings=data)
+    return jsonify(settings=public_settings(data))
 
 
 @app.put("/api/settings")
@@ -3037,8 +3103,282 @@ def put_settings():
     with connect() as conn:
         save_settings(conn, body_json())
         data = get_settings(conn)
-    data.pop("must_change_password", None)
-    return jsonify(settings=data)
+    return jsonify(settings=public_settings(data))
+
+
+def moadian_ready(settings: dict) -> tuple[str, str, str]:
+    fiscal = (settings.get("moadian_fiscal_id") or "").strip().upper()
+    economic = re.sub(r"\D", "", str(settings.get("moadian_economic_code") or ""))
+    private_key = settings.get("moadian_private_key") or ""
+    if not re.fullmatch(r"[A-Z0-9]{6}", fiscal) or not re.fullmatch(r"\d{11,14}", economic) or "PRIVATE KEY" not in private_key:
+        raise AppError("شناسه حافظه مالیاتی، کد اقتصادی و کلید خصوصی را در تنظیمات وارد کنید")
+    return fiscal, economic, private_key
+
+
+def moadian_client(settings: dict):
+    try:
+        import moadian
+    except ImportError:
+        raise AppError("کتابخانه رمزنگاری روی این رایانه نیست. دفترچی را دوباره اجرا کنید.")
+    fiscal, _economic, private_key = moadian_ready(settings)
+    return moadian.Client(fiscal, private_key, settings.get("moadian_sandbox") == "1", http_request)
+
+
+def call_moadian(action):
+    try:
+        import moadian
+    except ImportError:
+        raise AppError("کتابخانه رمزنگاری روی این رایانه نیست. دفترچی را دوباره اجرا کنید.")
+    try:
+        return action()
+    except moadian.MoadianError as exc:
+        raise AppError(str(exc), 502)
+    except AppError:
+        raise
+    except Exception:
+        log.exception("moadian")
+        raise AppError("سامانه مودیان پاسخ نداد", 502)
+
+
+def split_rial_discount(amounts: list[int], discount: int) -> list[int]:
+    if discount <= 0 or not amounts:
+        return [0] * len(amounts)
+    total = sum(amounts)
+    discount = min(discount, total)
+    shares = []
+    used = 0
+    for index, amount in enumerate(amounts):
+        share = discount - used if index == len(amounts) - 1 else (discount * amount // total if total else 0)
+        share = max(0, min(share, amount))
+        shares.append(share)
+        used += share
+    return shares
+
+
+def build_moadian_invoice(sale, items, fiscal: str, economic: str, vat_rate: int) -> dict:
+    import moadian
+    when = datetime.fromisoformat(sale["created_at"])
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=TEHRAN)
+    taxid = moadian.generate_tax_id(fiscal, when, int(sale["id"]))
+    indatim = int(when.timestamp() * 1000)
+    amounts = [int(item["unit_price"]) * 10 * int(item["qty"]) for item in items]
+    discounts = split_rial_discount(amounts, int(sale["discount"]) * 10)
+    body = []
+    for item, prdis, dis in zip(items, amounts, discounts):
+        adis = prdis - dis
+        vam = int((Decimal(adis) * Decimal(vat_rate) / Decimal(100)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+        body.append({
+            "sstid": item["tax_code"],
+            "sstt": item["name"],
+            "am": int(item["qty"]),
+            "mu": "1627",
+            "fee": int(item["unit_price"]) * 10,
+            "prdis": prdis,
+            "dis": dis,
+            "adis": adis,
+            "vra": int(vat_rate),
+            "vam": vam,
+            "tsstam": adis + vam,
+        })
+    tprdis = sum(line["prdis"] for line in body)
+    tdis = sum(line["dis"] for line in body)
+    tadis = sum(line["adis"] for line in body)
+    tvam = sum(line["vam"] for line in body)
+    tbill = sum(line["tsstam"] for line in body)
+    credit = sale["payment_method"] == "credit"
+    invoice = {
+        "header": {
+            "taxid": taxid,
+            "indatim": indatim,
+            "indati2m": indatim,
+            "inty": 2,
+            "inno": moadian.invoice_serial_hex(int(sale["id"])),
+            "irtaxid": None,
+            "inp": 1,
+            "ins": 1,
+            "tins": economic,
+            "tprdis": tprdis,
+            "tdis": tdis,
+            "tadis": tadis,
+            "tvam": tvam,
+            "todam": 0,
+            "tbill": tbill,
+            "setm": 2 if credit else 1,
+            "cap": 0 if credit else tbill,
+            "insp": tbill if credit else 0,
+            "tvop": 0 if credit else tvam,
+            "tax17": 0,
+        },
+        "body": body,
+    }
+    if not credit:
+        pmt = {"cash": 3, "card": 4, "gateway": 5}.get(sale["payment_method"], 8)
+        invoice["payments"] = [{"pmt": pmt, "pdt": indatim, "pv": tbill}]
+    return invoice
+
+
+def remember_moadian(sale_id: int, status: str, error: str = "", **extra):
+    assignments = ["moadian_status=?", "moadian_error=?"]
+    values: list = [status, (error or "")[:400]]
+    for key in ("moadian_uid", "moadian_taxid", "moadian_reference"):
+        if key in extra:
+            assignments.append(f"{key}=?")
+            values.append(extra[key])
+    values.append(sale_id)
+    with connect() as conn:
+        conn.execute(f"UPDATE sales SET {', '.join(assignments)} WHERE id=?", values)
+
+
+def enqueue_reference(body: dict) -> tuple[str, str]:
+    result = body.get("result") if isinstance(body, dict) else None
+    row = result[0] if isinstance(result, list) and result else result if isinstance(result, dict) else None
+    if not isinstance(row, dict):
+        raise AppError("پاسخ سامانه مودیان نامشخص است", 502)
+    error = row.get("errorCode") or row.get("errorDetail")
+    if error:
+        raise AppError(str(error)[:240], 502)
+    ref = str(row.get("referenceNumber") or "")
+    if not ref:
+        raise AppError("شماره پیگیری سامانه مودیان نیامد", 502)
+    return str(row.get("uid") or ""), ref
+
+
+def submit_moadian(sale_id: int) -> dict:
+    with connect() as conn:
+        sale = conn.execute("SELECT * FROM sales WHERE id=?", (sale_id,)).fetchone()
+        if not sale:
+            raise AppError("فاکتور پیدا نشد", 404)
+        if sale["status"] != "paid":
+            raise AppError("فقط فاکتور پرداخت‌شده به سامانه مودیان می‌رود")
+        if sale["moadian_status"] in {"sent", "success", "pending"} and sale["moadian_reference"]:
+            payload = sale_payload(conn, sale_id)
+            payload["message"] = "این فاکتور قبلاً به سامانه رفته است"
+            return payload
+        settings = get_settings(conn)
+        if settings.get("moadian_enabled") != "1":
+            raise AppError("در تنظیمات، اتصال سامانه مودیان خاموش است")
+        fiscal, economic, _key = moadian_ready(settings)
+        items = conn.execute(
+            """SELECT si.name, si.qty, si.unit_price, p.tax_code
+               FROM sale_items si LEFT JOIN products p ON p.id = si.product_id
+               WHERE si.sale_id=? ORDER BY si.id""",
+            (sale_id,),
+        ).fetchall()
+        missing = [row["name"] for row in items if not (row["tax_code"] or "").strip()]
+        if missing:
+            message = "شناسه کالا/خدمت مودیان نیست: " + "، ".join(missing)
+            conn.execute(
+                "UPDATE sales SET moadian_status='skipped', moadian_error=? WHERE id=?",
+                (message[:400], sale_id),
+            )
+            payload = sale_payload(conn, sale_id)
+            payload["message"] = message
+            return payload
+        rate = setting_int(settings, "moadian_vat")
+        if rate > 100:
+            rate = 10
+        invoice = build_moadian_invoice(sale, items, fiscal, economic, rate)
+        conn.execute("UPDATE sales SET moadian_taxid=?, moadian_error='' WHERE id=?", (invoice["header"]["taxid"], sale_id))
+        client = moadian_client(settings)
+    try:
+        response = call_moadian(lambda: client.send_invoice(invoice))
+        uid, ref = enqueue_reference(response)
+    except AppError as exc:
+        remember_moadian(sale_id, "failed", str(exc), moadian_taxid=invoice["header"]["taxid"])
+        raise
+    remember_moadian(sale_id, "sent", "", moadian_uid=uid, moadian_reference=ref, moadian_taxid=invoice["header"]["taxid"])
+    with connect() as conn:
+        payload = sale_payload(conn, sale_id)
+    payload["message"] = "صورتحساب در صف سامانه مودیان قرار گرفت"
+    return payload
+
+
+def maybe_send_moadian(sale_id: int):
+    try:
+        with connect() as conn:
+            row = conn.execute("SELECT status, moadian_status FROM sales WHERE id=?", (sale_id,)).fetchone()
+            enabled = get_settings(conn).get("moadian_enabled") == "1"
+        if not row or row["status"] != "paid" or not enabled:
+            return
+        if row["moadian_status"] in {"sent", "success", "pending"}:
+            return
+        submit_moadian(sale_id)
+    except AppError as exc:
+        with connect() as conn:
+            current = conn.execute("SELECT moadian_status FROM sales WHERE id=?", (sale_id,)).fetchone()
+        if current and current["moadian_status"]:
+            return
+        remember_moadian(sale_id, "failed", str(exc))
+    except Exception:
+        log.exception("moadian send")
+        remember_moadian(sale_id, "failed", "ارسال به سامانه مودیان انجام نشد")
+
+
+def inquiry_moadian(sale_id: int) -> dict:
+    with connect() as conn:
+        sale = conn.execute("SELECT * FROM sales WHERE id=?", (sale_id,)).fetchone()
+        if not sale:
+            raise AppError("فاکتور پیدا نشد", 404)
+        if not sale["moadian_reference"]:
+            raise AppError("این فاکتور هنوز شماره پیگیری مودیان ندارد")
+        client = moadian_client(get_settings(conn))
+        reference = sale["moadian_reference"]
+    body = call_moadian(lambda: client.inquiry(reference))
+    result = body.get("result") if isinstance(body, dict) else None
+    data = result.get("data") if isinstance(result, dict) else None
+    row = data[0] if isinstance(data, list) and data else {}
+    status = str((row or {}).get("status") or "").upper()
+    errors = []
+    detail = (row or {}).get("data") if isinstance(row, dict) else None
+    if isinstance(detail, dict):
+        for item in detail.get("error") or []:
+            if isinstance(item, dict) and item.get("message"):
+                errors.append(str(item["message"]))
+    text = "؛ ".join(errors)[:400]
+    if status == "SUCCESS":
+        stored, text, message = "success", "", "سامانه مودیان صورتحساب را تأیید کرد"
+    elif status == "FAILED":
+        stored = "failed"
+        text = text or "سامانه صورتحساب را نپذیرفت"
+        message = text
+    else:
+        stored = "pending"
+        text = text or "هنوز در سامانه در حال بررسی است"
+        message = text
+    remember_moadian(sale_id, stored, text)
+    with connect() as conn:
+        payload = sale_payload(conn, sale_id)
+    payload["message"] = message
+    return payload
+
+
+@app.post("/api/sales/<int:sale_id>/moadian")
+def send_sale_moadian(sale_id: int):
+    require_user()
+    try:
+        payload = submit_moadian(sale_id)
+    except AppError as exc:
+        if exc.status < 500:
+            raise
+        with connect() as conn:
+            payload = sale_payload(conn, sale_id)
+        payload["message"] = str(exc)
+    return jsonify(**payload)
+
+
+@app.post("/api/sales/<int:sale_id>/moadian/inquiry")
+def inquiry_sale_moadian(sale_id: int):
+    require_user()
+    try:
+        payload = inquiry_moadian(sale_id)
+    except AppError as exc:
+        if exc.status < 500:
+            raise
+        with connect() as conn:
+            payload = sale_payload(conn, sale_id)
+        payload["message"] = str(exc)
+    return jsonify(**payload)
 
 
 @app.post("/api/settings/test/<kind>")
@@ -3086,6 +3426,16 @@ def test_setting(kind: str):
             if not host_mail_ready():
                 raise AppError(explain_host_mail("تنظیم نشده"), 502)
             message = "هاست وب‌بیکری برای فرستادن کد به جیمیل پاسخ داد"
+        elif kind == "moadian":
+            _fiscal, economic, _key = moadian_ready(settings)
+            client = moadian_client(settings)
+            call_moadian(client.server_information)
+            call_moadian(client.token)
+            eco = call_moadian(lambda: client.economic_code(economic))
+            data = ((eco.get("result") or {}).get("data") or {}) if isinstance(eco, dict) else {}
+            trade = data.get("nameTrade") or "کد اقتصادی پذیرفته شد"
+            mode = "آزمایشی" if settings.get("moadian_sandbox") == "1" else "واقعی"
+            message = f"اتصال {mode} به سامانه مودیان برقرار است: {trade}"
         else:
             raise AppError("آزمایش نامعتبر است")
     return jsonify(ok=True, message=message)

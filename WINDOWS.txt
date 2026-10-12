@@ -5,6 +5,12 @@ https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/account
 
 فروش و حساب‌ها سر جایشان می‌مانند.
 
+سامانه مودیان، از تنظیمات:
+شناسه یکتای حافظه مالیاتی، کد اقتصادی و کلید خصوصی کارپوشه را وارد کنید.
+روی هر کالا شناسه ۱۳ رقمی کالا/خدمت را بگذارید.
+ارسال آزمایشی روشن است. تا آن را برندارید، صورتحساب واقعی ثبت نمی‌شود.
+
+
 فایل‌های هاست، یکجا:
 https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Host.zip
 

@@ -474,10 +474,10 @@ function posHtml() {
 
 function productRows() {
   const query = state.productQuery.trim();
-  const rows = state.products.filter((product) => !query || `${product.name} ${product.barcode} ${product.sku}`.includes(query));
+  const rows = state.products.filter((product) => !query || `${product.name} ${product.barcode} ${product.sku} ${product.tax_code || ""}`.includes(query));
   if (!rows.length) return `<p class="empty">کالایی ثبت نشده. از فرم بالا یا فایل اکسل شروع کنید.</p>`;
-  return `<table><thead><tr><th></th><th>نام</th><th>بارکد</th><th>قیمت فروش</th><th>موجودی</th><th></th></tr></thead><tbody>
-    ${rows.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}${product.woo_id ? ` <span class="pill">ووکامرس</span>` : ""}</td><td class="ltr">${esc(product.barcode || "—")}</td><td class="num">${money(product.price)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td><td class="row-actions"><button type="button" class="btn" data-act="edit-product" data-id="${product.id}">ویرایش</button><button type="button" class="btn danger" data-act="archive-product" data-id="${product.id}">بایگانی</button></td></tr>`).join("")}
+  return `<table><thead><tr><th></th><th>نام</th><th>بارکد</th><th>مودیان</th><th>قیمت فروش</th><th>موجودی</th><th></th></tr></thead><tbody>
+    ${rows.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}${product.woo_id ? ` <span class="pill">ووکامرس</span>` : ""}</td><td class="ltr">${esc(product.barcode || "—")}</td><td class="ltr">${esc(product.tax_code || "—")}</td><td class="num">${money(product.price)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td><td class="row-actions"><button type="button" class="btn" data-act="edit-product" data-id="${product.id}">ویرایش</button><button type="button" class="btn danger" data-act="archive-product" data-id="${product.id}">بایگانی</button></td></tr>`).join("")}
   </tbody></table>`;
 }
 function productsHtml() {
@@ -493,7 +493,7 @@ function productsHtml() {
       <label class="btn">ورود اکسل<input id="excel-file" type="file" accept=".xlsx" hidden data-act="import-excel"></label>
       <button type="button" class="btn" data-act="woo-push">ارسال همه به ووکامرس</button>
       <button type="button" class="btn" data-act="woo-pull">دریافت از ووکامرس</button>
-    </div><p class="hint">ستون‌های اکسل: نام، کد، بارکد، قیمت، موجودی، قیمت خرید، تصویر. سرستون انگلیسی هم قبول است. تصویر محلی فقط داخل دفترچی می‌ماند؛ ووکامرس آدرس اینترنتی می‌خواهد.</p></section>
+    </div><p class="hint">ستون‌های اکسل: نام، کد، بارکد، قیمت، موجودی، قیمت خرید، تصویر، شناسه مودیان. سرستون انگلیسی هم قبول است. تصویر محلی فقط داخل دفترچی می‌ماند؛ ووکامرس آدرس اینترنتی می‌خواهد.</p></section>
     <section class="card"><input id="product-query" value="${esc(state.productQuery)}" placeholder="جستجو"><div id="product-table">${productRows()}</div></section>
   </div>`;
 }
@@ -644,6 +644,15 @@ function settingsHtml() {
       <label class="check"><input type="checkbox" name="sms_low_stock" ${checked("sms_low_stock")}>پیامک موجودی کم</label>
       <button type="button" class="btn" data-act="test-setting" data-kind="sms">پیام آزمایشی</button>
     </section>
+    <section class="card"><h2 class="section-title">سامانه مودیان</h2>
+      <div class="grid-2"><div class="field"><label>شناسه یکتای حافظه مالیاتی</label><input class="ltr" name="moadian_fiscal_id" maxlength="6" value="${esc(s.moadian_fiscal_id || "")}"></div><div class="field"><label>کد اقتصادی</label><input class="ltr" name="moadian_economic_code" value="${esc(s.moadian_economic_code || "")}"></div></div>
+      <div class="field"><label>کلید خصوصی کارپوشه</label><textarea class="ltr" name="moadian_private_key" rows="4" placeholder="${s.moadian_key_saved === "1" ? "کلید ذخیره شده است. برای عوض کردن، کلید تازه را بچسبانید." : "متن فایل pem"}"></textarea></div>
+      ${field("moadian_vat", "نرخ مالیات، درصد")}
+      <label class="check"><input type="checkbox" name="moadian_enabled" ${checked("moadian_enabled")}>بعد از هر فروش، صورتحساب به سامانه برود</label>
+      <label class="check"><input type="checkbox" name="moadian_sandbox" ${checked("moadian_sandbox")}>ارسال آزمایشی. صورتحساب واقعی ثبت نمی‌شود</label>
+      <button type="button" class="btn" data-act="test-setting" data-kind="moadian">آزمایش اتصال</button>
+      <p class="hint">شناسه حافظه مالیاتی، کد اقتصادی و کلید خصوصی را از کارپوشه بگیرید. شناسه ۱۳ رقمی کالا/خدمت را روی هر کالا بگذارید. تا وقتی ارسال آزمایشی روشن است، فاکتور به سامانه واقعی نمی‌رود. مبلغ فروش تومان است و برای مودیان به ریال تبدیل می‌شود.</p>
+    </section>
     <section class="card"><h2 class="section-title">جیمیل حساب کاربری</h2>
       <button type="button" class="btn" data-act="test-setting" data-kind="email">آزمایش هاست جیمیل</button>
       <p class="hint">کد تأیید و بازیابی رمز از هاست وب‌بیکری به جیمیل می‌رود. فایل mail.php باید در public_html/daftarchi باشد. رمز ورود جیمیل روی این رایانه لازم نیست.</p>
@@ -653,7 +662,7 @@ function settingsHtml() {
       <p class="ltr">https://webakery.ir/daftarchi/version.json</p>
       <p class="hint">این فایل‌ها را از گیت‌هاب دانلود کنید، نه از خود هاست. بعد روی هاست در public_html/daftarchi بگذارید:</p>
       <p class="ltr">https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Host.zip</p>
-      <p class="ltr">https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Setup.exe</p>
+      <p class="ltr">https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi.exe</p>
       <p class="hint">زیپ را باز کنید. version.json و mail.php را با فایل نصب در همان پوشه هاست بگذارید.</p>
     </section>
     <button class="btn primary" type="submit">ذخیره تنظیمات</button>
@@ -674,6 +683,7 @@ function productForm() {
     <div class="field"><label>قیمت فروش، تومان</label><input name="price" inputmode="decimal" required autocomplete="off" value="${price}"></div>
     <div class="field"><label>موجودی</label><input name="stock" inputmode="numeric" autocomplete="off" value="${product.id ? product.stock : ""}"></div>
     <div class="field"><label>بارکد</label><input class="ltr" name="barcode" autocomplete="off" value="${esc(product.barcode || "")}"></div>
+    <div class="field"><label>شناسه کالا/خدمت مودیان</label><input class="ltr" name="tax_code" inputmode="numeric" autocomplete="off" placeholder="۱۳ رقم، اختیاری" value="${esc(product.tax_code || "")}"></div>
     <details ${product.id ? "open" : ""}>
       <summary>کد، قیمت خرید و تصویر</summary>
       <div class="field"><label>کد کالا</label><input name="sku" value="${esc(product.sku || "")}"></div>
@@ -697,7 +707,8 @@ function modalHtml() {
   }
   if (modal.type === "receipt") {
     const sale = modal.sale;
-    inner = `<div id="print-area"><h2>دفترچی</h2><p>فاکتور ${num(sale.id)} · ${esc(sale.at_jalali)}</p><p>${esc(sale.customer_name || "")} ${esc(sale.customer_phone || "")}</p><table>${modal.items.map((item) => `<tr><td>${esc(item.name)} × ${num(item.qty)}</td><td class="num">${money(item.line_total)}</td></tr>`).join("")}</table><p>تخفیف ${money(sale.discount)}</p><p><strong>قابل پرداخت ${money(sale.payable)}</strong></p><p>${PAY[sale.payment_method] || ""}</p></div><button type="button" class="btn" data-act="print">چاپ</button>`;
+    const moadianLabel = { skipped: "شناسه کالا ندارد", failed: "ارسال نشد", sent: "در صف سامانه", pending: "در حال بررسی", success: "تأیید شد" }[sale.moadian_status] || "";
+    inner = `<div id="print-area"><h2>دفترچی</h2><p>فاکتور ${num(sale.id)} · ${esc(sale.at_jalali)}</p><p>${esc(sale.customer_name || "")} ${esc(sale.customer_phone || "")}</p><table>${modal.items.map((item) => `<tr><td>${esc(item.name)} × ${num(item.qty)}</td><td class="num">${money(item.line_total)}</td></tr>`).join("")}</table><p>تخفیف ${money(sale.discount)}</p><p><strong>قابل پرداخت ${money(sale.payable)}</strong></p><p>${PAY[sale.payment_method] || ""}</p>${moadianLabel ? `<p>سامانه مودیان: ${esc(moadianLabel)}</p>` : ""}${sale.moadian_taxid ? `<p class="ltr">${esc(sale.moadian_taxid)}</p>` : ""}</div>${sale.moadian_error ? `<p class="hint">${esc(sale.moadian_error)}</p>` : ""}<div class="row-actions"><button type="button" class="btn" data-act="print">چاپ</button>${sale.moadian_status === "success" ? "" : `<button type="button" class="btn primary" data-act="moadian-send" data-id="${sale.id}">ارسال به سامانه مودیان</button>`}${sale.moadian_reference ? `<button type="button" class="btn" data-act="moadian-inquiry" data-id="${sale.id}">استعلام مودیان</button>` : ""}</div>`;
   }
   if (modal.type === "password") inner = `<form data-act="change-password"><h2 class="section-title">تغییر رمز</h2><div class="field"><label>رمز فعلی</label><input type="password" name="current" required></div><div class="field"><label>رمز جدید</label><input type="password" name="password" minlength="6" required></div><button class="btn primary" type="submit">ذخیره</button></form>
     <form data-act="attach-email"><h2 class="section-title">ورود با جیمیل</h2><p class="hint">همین جیمیل را ذخیره کنید و بعد با آن وارد شوید.</p><div class="field"><label>جیمیل</label><input class="ltr" name="email" type="email" value="${esc(state.user.email || "")}" required placeholder="name@gmail.com"></div><button class="btn primary" type="submit">ذخیره جیمیل</button></form>
@@ -943,7 +954,7 @@ async function saveProduct(form, data) {
 }
 async function saveSettings(form) {
   const data = Object.fromEntries(new FormData(form).entries());
-  for (const key of ["gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock"]) {
+  for (const key of ["gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock", "moadian_enabled", "moadian_sandbox"]) {
     data[key] = form.querySelector(`[name="${key}"]`)?.checked ? "1" : "0";
   }
   state.settings = (await api("/api/settings", { method: "PUT", body: data })).settings;
@@ -1109,6 +1120,15 @@ async function onClick(event) {
     } else if (act === "filter-account") {
       state.accountId = el.dataset.id || "";
       await loaders.accounts();
+      render();
+    } else if (act === "moadian-send" || act === "moadian-inquiry") {
+      const path = act === "moadian-send" ? "moadian" : "moadian/inquiry";
+      const result = await api(`/api/sales/${el.dataset.id}/${path}`, { method: "POST", body: {} });
+      if (state.modal?.type === "receipt") {
+        state.modal.sale = result.sale;
+        state.modal.items = result.items;
+      }
+      toast(result.message || "انجام شد");
       render();
     } else if (act === "test-setting") {
       const result = await api(`/api/settings/test/${el.dataset.kind}`, { method: "POST", body: {} });

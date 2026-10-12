@@ -4,3 +4,4 @@ jdatetime>=5.0.0
 waitress>=3.0.0
 colorama>=0.4.6
 tzdata>=2024.1
+cryptography>=42.0.0
