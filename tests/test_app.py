@@ -132,6 +132,28 @@ class DaftarchiTest(unittest.TestCase):
         again = self.client.post("/api/sales", json={"items": [{"product_id": product["id"], "qty": 1}], "payment_method": "cash"})
         self.assertEqual(again.status_code, 400)
 
+    def test_trial_lasts_seven_days_then_blocks_sales(self):
+        access = self.client.get("/api/auth/me").get_json()["access"]
+        self.assertEqual(access["mode"], "trial")
+        self.assertTrue(access["active"])
+        self.assertEqual(access["days_left"], 7)
+        self.assertEqual(access["title"], "۷ روز رایگان")
+        again = self.client.get("/api/licenses").get_json()["access"]
+        self.assertEqual(again["ends_at"], access["ends_at"])
+        import sqlite3
+        past = (appmod.now_dt() - appmod.timedelta(days=1)).isoformat(timespec="seconds")
+        db = sqlite3.connect(Path(os.environ["DAFTARCHI_DATA"]) / "daftarchi.db")
+        db.execute("UPDATE settings SET value=? WHERE key='trial_ends_at'", (past,))
+        db.commit()
+        db.close()
+        product = self.add_product(barcode="trial-block")
+        self.open_register(0)
+        blocked = self.client.post("/api/sales", json={
+            "items": [{"product_id": product["id"], "qty": 1}], "payment_method": "cash",
+        })
+        self.assertEqual(blocked.status_code, 402, blocked.get_json())
+        self.assertIn("رایگان", blocked.get_json()["error"])
+
     def test_license_cap_and_discount(self):
         self.open_register(0)
         saved = self.client.put("/api/licenses/prices", json={"cap_50y": 1})
@@ -283,16 +305,19 @@ class DaftarchiTest(unittest.TestCase):
 
         def fake_http(method, url, payload=None, headers=None, form=None, timeout=12):
             calls.append((method, url, payload))
-            if url.endswith("/v1/request"):
-                self.assertEqual(payload["merchant"], "6a331116da557b902563c32f")
+            if str(url).endswith("/pay.php") and payload and payload.get("action") == "request":
+                self.assertEqual(payload["key"], "daftarchi-webakery-mail")
                 self.assertEqual(payload["callbackUrl"], "https://webakery.ir")
                 self.assertEqual(payload["amount"], 60000000)
                 self.assertIn("webakery.ir", payload["description"])
-                return 200, {"result": 100, "trackId": 998877, "message": "success"}
-            if url.endswith("/v1/verify"):
-                self.assertEqual(payload["merchant"], "6a331116da557b902563c32f")
+                self.assertTrue(str(url).startswith("https://webakery.ir/license-server/"))
+                return 200, {
+                    "ok": True, "service": "daftarchi-pay", "result": 100,
+                    "trackId": 998877, "payUrl": "https://gateway.zibal.ir/start/998877",
+                }
+            if str(url).endswith("/pay.php") and payload and payload.get("action") == "verify":
                 self.assertEqual(payload["trackId"], 998877)
-                return 200, {"result": 100, "refNumber": "445566"}
+                return 200, {"ok": True, "service": "daftarchi-pay", "result": 100, "refNumber": "445566"}
             if url.endswith("/wp-json"):
                 return 500, None
             if url.endswith("/wp-login.php"):
@@ -329,8 +354,8 @@ class DaftarchiTest(unittest.TestCase):
             self.assertIn("وردپرس", site.get_json()["message"])
 
             def rejected(method, url, payload=None, headers=None, form=None, timeout=12):
-                if url.endswith("/v1/request"):
-                    return 200, {"result": 115, "message": "invalid IP 203.0.113.8"}
+                if str(url).endswith("/pay.php"):
+                    return 502, {"ok": False, "error": "invalid IP 203.0.113.8"}
                 return 200, []
 
             appmod.http_request = rejected
@@ -339,7 +364,7 @@ class DaftarchiTest(unittest.TestCase):
             })
             self.assertEqual(denied.status_code, 502)
             self.assertIn("203.0.113.8", denied.get_json()["error"])
-            self.assertIn("پنل زیبال", denied.get_json()["error"])
+            self.assertIn("هاست", denied.get_json()["error"])
             rows = self.client.get("/api/licenses").get_json()["licenses"]
             self.assertTrue(all(row["buyer_name"] != "بدون آی‌پی" or row["status"] == "canceled" for row in rows))
         finally:
@@ -527,10 +552,12 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.0.5")
+        self.assertEqual(appmod.APP_VERSION, "1.0.6")
+        self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         script = Path("/workspace/static/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("۷ روز رایگان فعال است", script)
         self.assertIn("async function buyLicense", script)
-        self.assertIn('data.payment_method = "gateway"', script)
+        self.assertIn('payment_method: "gateway"', script)
         self.assertIn("popup.location.href = url", script)
         text = Path("/workspace/windows/installer/installer.nsi").read_text(encoding="utf-8")
         self.assertNotIn("MUI_PAGE_DIRECTORY", text)
@@ -551,7 +578,10 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.0.5")
+        self.assertEqual(boot["version"], "1.0.6")
+        pay = Path("/workspace/site-updates/daftarchi/pay.php").read_text(encoding="utf-8")
+        self.assertIn("daftarchi-pay", pay)
+        self.assertIn("gateway.zibal.ir/v1/request", pay)
         self.assertTrue(boot["host_mail"])
 
 

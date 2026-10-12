@@ -50,6 +50,7 @@ const state = {
   accountId: "",
   customers: [],
   licenses: null,
+  access: null,
   plan: "12m",
   sms: [],
   settings: null,
@@ -201,6 +202,7 @@ const loaders = {
   },
   async licenses() {
     state.licenses = await api("/api/licenses");
+    if (state.licenses?.access) state.access = state.licenses.access;
   },
   async customers() {
     state.customers = (await api("/api/customers")).customers;
@@ -366,6 +368,10 @@ function shell(content) {
   const pill = state.registerInfo
     ? `<span class="pill ${open ? "" : "warn"}">${open ? "صندوق باز" : "صندوق بسته"}</span>`
     : "";
+  const access = state.access;
+  const accessPill = access
+    ? `<span class="pill ${access.active ? "" : "warn"}">${access.mode === "paid" ? "لایسنس فعال" : access.active ? `${num(access.days_left)} روز رایگان` : "مهلت رایگان تمام شد"}</span>`
+    : "";
   const banner = [
     state.mustChange ? `<div class="banner">رمز اولیه هنوز فعال است. <button type="button" class="btn" data-act="password-modal">عوضش کنید</button></div>` : "",
     updateBanner(),
@@ -379,7 +385,7 @@ function shell(content) {
     <main class="main">
       <header class="topbar">
         <div><h1>${TITLES[state.page] || ""}</h1></div>
-        <div class="top-actions">${pill}<button type="button" class="btn" data-act="password-modal">تغییر رمز</button><button type="button" class="btn" data-act="logout">خروج</button></div>
+        <div class="top-actions">${accessPill}${pill}<button type="button" class="btn" data-act="password-modal">تغییر رمز</button><button type="button" class="btn" data-act="logout">خروج</button></div>
       </header>
       ${banner}${content}
     </main>
@@ -550,18 +556,22 @@ function registerHtml() {
   return `<div class="stack">${body}${past}</div>`;
 }
 
+function accessCard(access) {
+  if (!access) return "";
+  if (access.mode === "paid" && access.active) {
+    return `<section class="card access-card"><span>لایسنس این دفترچی</span><h2>${esc(access.title)}</h2><p class="days">${num(access.days_left)} روز مانده</p><p class="hint">تا ${esc(access.ends_jalali)}</p></section>`;
+  }
+  if (access.active) {
+    return `<section class="card access-card"><span>استفاده رایگان</span><h2>۷ روز رایگان فعال است</h2><p class="days">${num(access.days_left)} روز مانده</p><p class="hint">تا ${esc(access.ends_jalali)}. هر وقت خواستید روی یک طرح بزنید.</p></section>`;
+  }
+  return `<section class="card access-card"><span>مهلت رایگان</span><h2>۷ روز رایگان تمام شده</h2><p class="hint">برای ادامه کار، روی یکی از طرح‌ها بزنید. صفحه زیبال باز می‌شود.</p></section>`;
+}
 function licensesHtml() {
   const data = state.licenses;
   if (!data) return "";
-  const plans = data.plans.map((plan) => `<button type="button" class="plan ${state.plan === plan.id ? "on" : ""}" data-act="pick-plan" data-plan="${plan.id}"><span>${esc(plan.title)}</span><em class="num">${money(plan.price)}</em><span>پرداخت در زیبال</span>${plan.remaining != null ? `<span>باقی‌مانده ${num(plan.remaining)} از ${num(plan.cap)}</span>` : ""}</button>`).join("");
-  return `<div class="stack"><div class="plans">${plans}</div>
-    <section class="card"><form data-act="sell-license"><input type="hidden" name="plan" value="${esc(state.plan)}">
-      <h2 class="section-title">لایسنس دفترچی برای خریدار اپ</h2>
-      <p class="hint">روی هر طرح بزنید. صفحه خرید زیبال همان لحظه باز می‌شود. این مبلغ وارد صندوق و دفتر فروشگاه نمی‌شود.</p>
-      <div class="grid-2"><div class="field"><label>نام خریدار</label><input name="buyer_name" placeholder="اگر خالی بماند، نام همین کاربر"></div><div class="field"><label>شماره تماس</label><input class="ltr" name="phone" placeholder="اگر خالی بماند، موبایل همین کاربر"></div></div>
-      <div class="grid-2"><div class="field"><label>تخفیف</label><input name="discount_value" value="0"></div><div class="field"><label>نوع تخفیف</label><select name="discount_type"><option value="amount">مبلغ</option><option value="percent">درصد</option></select></div></div>
-      <button class="btn primary" type="submit">پرداخت در زیبال</button>
-      <p class="hint">بعد از پرداخت در زیبال، برگردید و «استعلام تأیید» را بزنید تا لایسنس فعال شود.</p></form>
+  const plans = data.plans.map((plan) => `<button type="button" class="plan buy" data-act="pick-plan" data-plan="${plan.id}"><span>${esc(plan.title)}</span><em class="num">${money(plan.price)}</em><span class="buy-label">خرید</span>${plan.remaining != null ? `<span>باقی‌مانده ${num(plan.remaining)} از ${num(plan.cap)}</span>` : ""}</button>`).join("");
+  return `<div class="stack">${accessCard(data.access)}<div class="plans">${plans}</div>
+    <p class="hint">روی طرح بزنید تا صفحه زیبال باز شود. مبلغ وارد صندوق فروشگاه نمی‌شود. درخواست پرداخت از هاست وب‌بیکری می‌رود، نه از آی‌پی این رایانه.</p>
       <details><summary>قیمت‌ها و ظرفیت پنجاه‌ساله</summary><form data-act="save-prices"><div class="grid-2">
         ${[["price_3m", "سه ماهه"], ["price_6m", "شش ماهه"], ["price_12m", "یک ساله"], ["price_50y", "پنجاه ساله"], ["cap_50y", "ظرفیت پنجاه ساله"]].map(([key, label]) => {
           const plan = data.plans.find((item) => item.id === { price_3m: "3m", price_6m: "6m", price_12m: "12m", price_50y: "50y" }[key]);
@@ -569,7 +579,6 @@ function licensesHtml() {
           return `<div class="field"><label>${label}</label><input name="${key}" value="${value}"></div>`;
         }).join("")}
       </div><button class="btn" type="submit">ذخیره قیمت‌ها</button></form></details>
-    </section>
     ${pendingLicenses(data)}
     <section class="card"><h2 class="section-title">لایسنس‌های فروخته‌شده</h2><table><thead><tr><th>طرح</th><th>خریدار</th><th>تماس</th><th>مبلغ</th><th>وضعیت</th><th>تا</th></tr></thead><tbody>
       ${data.licenses.map((row) => `<tr><td>${esc(row.title)}</td><td>${esc(row.buyer_name)}</td><td class="ltr">${esc(row.phone)}</td><td class="num">${money(row.payable)}</td><td>${esc(LICENSE_STATUS[row.status] || row.status)}</td><td>${esc(row.ends_jalali)}</td></tr>`).join("") || `<tr><td colspan="6">هنوز لایسنسی فروخته نشده.</td></tr>`}
@@ -697,6 +706,9 @@ function modalHtml() {
 }
 
 function pageHtml() {
+  if (state.access && !state.access.active && state.page !== "licenses" && state.page !== "settings") {
+    return `<section class="card access-card"><h2>مهلت ۷ روز رایگان تمام شده</h2><p class="hint">فروش تا خرید لایسنس بسته است. اطلاعات فروشگاه سر جایش می‌ماند.</p><button type="button" class="btn primary" data-act="nav" data-page="licenses">خرید لایسنس</button></section>`;
+  }
   const pages = {
     dashboard: dashboardHtml, pos: posHtml, products: productsHtml, inventory: inventoryHtml,
     accounts: accountsHtml, register: registerHtml, licenses: licensesHtml, customers: customersHtml,
@@ -721,16 +733,38 @@ function closePopup(popup) {
   try { if (popup && !popup.closed) popup.close(); } catch { /* پنجره را مرورگر بسته است */ }
 }
 
-async function buyLicense(plan, preset, popup) {
+function watchLicense(id) {
+  let tries = 0;
+  const timer = setInterval(() => {
+    tries += 1;
+    if (tries > 40 || state.modal?.license?.id !== id) {
+      clearInterval(timer);
+      return;
+    }
+    api(`/api/licenses/${id}/confirm`, { method: "POST", body: { mode: "verify" } }).then(async (result) => {
+      clearInterval(timer);
+      state.modal = null;
+      toast(`لایسنس فعال شد: ${money(result.payable)}`);
+      await loaders.licenses();
+      state.access = state.licenses?.access || state.access;
+      render();
+    }).catch((err) => {
+      if (err.status === 409) return;
+      clearInterval(timer);
+    });
+  }, 4000);
+}
+
+async function buyLicense(plan, _preset, popup) {
   state.plan = plan;
-  const form = document.querySelector('form[data-act="sell-license"]');
-  const data = preset ? { ...preset } : (form ? Object.fromEntries(new FormData(form).entries()) : {});
-  data.plan = plan;
-  data.payment_method = "gateway";
-  if (!String(data.buyer_name || "").trim()) data.buyer_name = state.user?.name || "خریدار";
-  if (!String(data.phone || "").trim()) data.phone = state.user?.phone || "";
-  if (!String(data.discount_value || "").trim()) data.discount_value = "0";
-  if (!data.discount_type) data.discount_type = "amount";
+  const data = {
+    plan,
+    payment_method: "gateway",
+    buyer_name: state.user?.name || "خریدار",
+    phone: state.user?.phone || "",
+    discount_value: "0",
+    discount_type: "amount",
+  };
   try {
     const result = await api("/api/licenses", { method: "POST", body: data });
     const url = result.license?.pay_url || "";
@@ -742,7 +776,9 @@ async function buyLicense(plan, preset, popup) {
     else location.assign(url);
     state.modal = { type: "license", license: result.license };
     await loaders.licenses();
+    state.access = state.licenses?.access || state.access;
     render();
+    watchLicense(result.license.id);
   } catch (err) {
     closePopup(popup);
     throw err;
@@ -763,6 +799,7 @@ async function onSubmit(event) {
         const result = await api("/api/auth/login", { method: "POST", body: data });
         state.user = result.user;
         state.mustChange = result.must_change_password;
+        state.access = result.access || null;
         hideToast();
         await navigate("dashboard");
       } catch (err) {
@@ -1158,6 +1195,7 @@ api("/api/auth/me").then(async (me) => {
   }
   state.user = me.user;
   state.mustChange = me.must_change_password;
+  state.access = me.access || null;
   await navigate(location.hash.replace("#", "") || "dashboard");
 }).catch((err) => {
   $app().innerHTML = `<p class="empty">${esc(err.message || "برنامه باز نشد")}</p>`;

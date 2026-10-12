@@ -91,7 +91,8 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.5"
+APP_VERSION = "1.0.6"
+TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
     "https://webakery.ir/license-server/version.json",
@@ -104,6 +105,11 @@ HOST_MAIL_URLS = (
     "https://webakery.ir/mail.php",
 )
 HOST_MAIL_URL = HOST_MAIL_URLS[0]
+HOST_PAY_URLS = (
+    "https://webakery.ir/license-server/pay.php",
+    "https://webakery.ir/daftarchi/pay.php",
+    "https://webakery.ir/pay.php",
+)
 HOST_MAIL_KEY = "daftarchi-webakery-mail"
 SMS_PROVIDERS = {"internal", "kavenegar", "melipayamak"}
 BOOL_KEYS = {"gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock"}
@@ -1183,10 +1189,125 @@ def license_gateway_settings(settings: dict) -> dict:
     return data
 
 
+def explain_host_pay(detail: str) -> str:
+    text = str(detail or "")
+    low = text.lower()
+    if "invalid ip" in low:
+        ip = text.replace(":", " ").split()[-1].strip(".,")
+        return (
+            f"زیبال مرچنت را شناخت، ولی آی‌پی هاست وب‌بیکری مجاز نیست: {ip}. "
+            "در پنل زیبال همین یک آی‌پی را برای مرچنت آزاد کنید. آی‌پی این رایانه لازم نیست."
+        )
+    if "404" in low:
+        return (
+            "فایل pay.php روی هاست نیست. آن را کنار mail.php در public_html/license-server بگذارید، "
+            "بعد https://webakery.ir/license-server/pay.php باید ok نشان بدهد."
+        )
+    if "اتصال" in text or "timed out" in low or "timeout" in low:
+        return "اتصال به هاست وب‌بیکری برای ساخت پرداخت برقرار نشد."
+    return f"پرداخت از هاست ساخته نشد: {text[:180]}"
+
+
+def host_pay(action: str, fields: dict) -> dict:
+    payload = {"key": HOST_MAIL_KEY, "action": action, **fields}
+    last_status, last_body = 404, {"error": "HTTP 404"}
+    for url in HOST_PAY_URLS:
+        try:
+            status, body = http_request("POST", url, payload=payload, timeout=20)
+        except AppError as exc:
+            last_status, last_body = 502, {"error": str(exc)}
+            continue
+        last_status, last_body = status, body if isinstance(body, dict) else {"error": "HTTP " + str(status)}
+        if status < 400 and isinstance(body, dict) and body.get("ok") and body.get("service") == "daftarchi-pay":
+            return body
+    detail = ""
+    if isinstance(last_body, dict):
+        detail = str(last_body.get("error") or last_body.get("message") or "")
+    raise AppError(explain_host_pay(detail or f"HTTP {last_status}"), 502)
+
+
 def webakery_payment(settings: dict, order_id: int, title: str, payable: int, buyer: str, phone: str) -> tuple[str, str, str]:
-    description = f"لایسنس {title} دفترچی — webakery.ir"
-    ref, pay_url = gateway_request(license_gateway_settings(settings), order_id, payable, phone, description)
-    return "zibal", ref, pay_url
+    tuned = license_gateway_settings(settings)
+    body = host_pay("request", {
+        "amount": int(payable) * 10,
+        "callbackUrl": tuned.get("gateway_callback") or WEBAKERY_URL,
+        "description": f"لایسنس {title} دفترچی — webakery.ir",
+        "orderId": str(order_id),
+        "mobile": phone or "",
+    })
+    track = str(body.get("trackId") or "")
+    if not track:
+        raise AppError("هاست شماره پرداخت زیبال را نداد", 502)
+    pay_url = str(body.get("payUrl") or f"https://gateway.zibal.ir/start/{track}")
+    return "zibal", track, pay_url
+
+
+def host_zibal_verify(track: str) -> str:
+    if not str(track or "").strip():
+        raise AppError("شناسه پرداخت این لایسنس خالی است")
+    body = host_pay("verify", {"trackId": int(track) if str(track).isdigit() else track})
+    if body.get("result") not in (100, 201, "100", "201"):
+        raise AppError("پرداخت هنوز در زیبال تأیید نشده است", 409)
+    return str(body.get("refNumber") or track)
+
+
+def days_left(end: datetime) -> int:
+    seconds = (end - now_dt()).total_seconds()
+    if seconds <= 0:
+        return 0
+    return (int(seconds) + 86399) // 86400
+
+
+def ensure_access(conn) -> dict:
+    now = now_dt()
+    paid = conn.execute(
+        """SELECT * FROM licenses
+           WHERE status='paid' AND plan!='7d' AND ends_at>?
+           ORDER BY ends_at DESC LIMIT 1""",
+        (iso(now),),
+    ).fetchone()
+    if paid:
+        end = datetime.fromisoformat(paid["ends_at"])
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=TEHRAN)
+        title = PLANS.get(paid["plan"], (paid["plan"], 0, ""))[0]
+        return {
+            "mode": "paid",
+            "active": True,
+            "title": title,
+            "days_left": days_left(end),
+            "ends_at": paid["ends_at"],
+            "ends_jalali": to_jalali(paid["ends_at"]),
+        }
+    settings = get_settings(conn)
+    started = str(settings.get("trial_started_at") or "").strip()
+    ends_at = str(settings.get("trial_ends_at") or "").strip()
+    if not started or not ends_at:
+        start = now.replace(microsecond=0)
+        end = start + timedelta(days=TRIAL_DAYS)
+        started = iso(start)
+        ends_at = iso(end)
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('trial_started_at', ?)", (started,))
+        conn.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('trial_ends_at', ?)", (ends_at,))
+    end = datetime.fromisoformat(ends_at)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=TEHRAN)
+    left = days_left(end)
+    return {
+        "mode": "trial" if left else "expired",
+        "active": left > 0,
+        "title": "۷ روز رایگان",
+        "days_left": left,
+        "ends_at": ends_at,
+        "ends_jalali": to_jalali(ends_at),
+    }
+
+
+def require_access(conn) -> dict:
+    access = ensure_access(conn)
+    if not access["active"]:
+        raise AppError("مهلت ۷ روز رایگان تمام شده. برای ادامه، از بخش لایسنس اپ یک طرح بخرید.", 402)
+    return access
 
 
 def woo_item(row) -> dict:
@@ -1599,10 +1720,11 @@ def login():
             )
         user = public_user(row)
         flag = get_settings(conn).get("must_change_password") == "1"
+        access = ensure_access(conn)
     session.clear()
     session["uid"] = row["id"]
     session.permanent = True
-    return jsonify(user=user, must_change_password=flag)
+    return jsonify(user=user, must_change_password=flag, access=access)
 
 
 @app.post("/api/auth/register")
@@ -1730,8 +1852,9 @@ def logout():
 def me():
     user = current_user()
     with connect() as conn:
-        flag = get_settings(conn).get("must_change_password") == "1"
-    return jsonify(user=public_user(user) if user else None, must_change_password=flag if user else False)
+        flag = get_settings(conn).get("must_change_password") == "1" if user else False
+        access = ensure_access(conn) if user else None
+    return jsonify(user=public_user(user) if user else None, must_change_password=flag if user else False, access=access)
 
 
 @app.post("/api/auth/password")
@@ -2262,6 +2385,7 @@ def create_sale():
     pos_ref = clean_text(payload.get("pos_ref"), "پیگیری", 64)
     alerts = []
     with connect() as conn:
+        require_access(conn)
         sess = require_open(conn) if method != "gateway" else open_session(conn)
         if method != "gateway" and not sess:
             raise AppError("صندوق بسته است. از صفحه صندوق آن را باز کنید.")
@@ -2694,6 +2818,7 @@ def list_licenses():
         sold = conn.execute("SELECT COUNT(*) AS c FROM licenses WHERE plan='50y' AND status!='canceled'").fetchone()["c"]
         cap = setting_int(settings, "cap_50y")
         rows = conn.execute("SELECT * FROM licenses ORDER BY id DESC LIMIT 50").fetchall()
+        access = ensure_access(conn)
     plans = []
     for key, (title, months, price_key) in PLANS.items():
         item = {"id": key, "title": title, "months": months, "price": setting_int(settings, price_key)}
@@ -2701,7 +2826,7 @@ def list_licenses():
             item["cap"] = cap
             item["remaining"] = max(0, cap - sold)
         plans.append(item)
-    return jsonify(plans=plans, licenses=[license_out(row) for row in rows])
+    return jsonify(plans=plans, licenses=[license_out(row) for row in rows], access=access)
 
 
 @app.put("/api/licenses/prices")
@@ -2792,6 +2917,8 @@ def confirm_license(license_id: int):
         ref = clean_text(payload.get("ref"), "پیگیری", 64)
         if len(ref) < 3:
             raise AppError("شماره پیگیری را وارد کنید")
+    elif (row["gateway"] or "zibal") == "zibal":
+        ref = host_zibal_verify(row["gateway_ref"] or "")
     else:
         ref = gateway_verify(settings, row)
     with connect() as conn:
@@ -2835,7 +2962,10 @@ def pay_return():
             settings = license_gateway_settings(settings)
     try:
         if row:
-            ref = gateway_verify(settings, row)
+            if (row["gateway"] or "zibal") == "zibal":
+                ref = host_zibal_verify(row["gateway_ref"] or "")
+            else:
+                ref = gateway_verify(settings, row)
             with connect() as conn:
                 mark_license_paid(conn, row["id"], row["user_id"], ref)
             return pay_page("لایسنس پرداخت شد و در دفترچی فعال است.", True)

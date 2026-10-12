@@ -115,6 +115,19 @@ h1, h2, h3, p { margin: 0; }
 }
 .stat small, .plan span { color: var(--muted); display: block; font-size: 12px; }
 .stat strong, .plan em { display: block; font-style: normal; font-size: 20px; margin-top: 4px; font-weight: 700; }
+.plan.buy { min-height: 148px; text-align: center; padding: 18px 12px; }
+.plan.buy:hover { border-color: var(--accent); }
+.buy-label {
+  display: inline-block;
+  margin-top: 12px;
+  background: var(--accent);
+  color: #fff !important;
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 13px;
+}
+.access-card h2 { font-size: 26px; letter-spacing: -0.03em; margin-top: 4px; }
+.access-card .days { font-size: 32px; font-weight: 700; margin: 8px 0 0; }
 .stat.active { outline: 2px solid var(--accent); }
 
 .btn {

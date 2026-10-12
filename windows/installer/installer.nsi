@@ -15,7 +15,7 @@ ShowInstDetails nevershow
 ShowUninstDetails nevershow
 SetOverwrite on
 
-!define PRODUCT_VERSION "1.0.5"
+!define PRODUCT_VERSION "1.0.6"
 
 !define MUI_ICON "daftarchi.ico"
 !define MUI_UNICON "daftarchi.ico"
@@ -36,12 +36,12 @@ SetOverwrite on
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "Farsi"
 
-VIProductVersion "1.0.5.0"
+VIProductVersion "1.0.6.0"
 VIAddVersionKey /LANG=1033 "ProductName" "Daftarchi"
 VIAddVersionKey /LANG=1033 "CompanyName" "webakery"
 VIAddVersionKey /LANG=1033 "FileDescription" "Daftarchi Setup"
-VIAddVersionKey /LANG=1033 "FileVersion" "1.0.5"
-VIAddVersionKey /LANG=1033 "ProductVersion" "1.0.5"
+VIAddVersionKey /LANG=1033 "FileVersion" "1.0.6"
+VIAddVersionKey /LANG=1033 "ProductVersion" "1.0.6"
 VIAddVersionKey /LANG=1033 "LegalCopyright" "webakery.ir"
 
 Function .onInit

@@ -26,10 +26,40 @@ def port_open(host: str, port: int) -> bool:
         return sock.connect_ex((host, port)) == 0
 
 
+def open_app_window(url: str) -> bool:
+    if os.name != "nt":
+        return False
+    import subprocess
+
+    roots = [
+        os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"),
+        os.environ.get("PROGRAMFILES", r"C:\Program Files"),
+        os.environ.get("LOCALAPPDATA", ""),
+    ]
+    names = [
+        ("Microsoft\\Edge\\Application\\msedge.exe", roots[:2]),
+        ("Google\\Chrome\\Application\\chrome.exe", roots),
+    ]
+    for relative, bases in names:
+        for base in bases:
+            if not base:
+                continue
+            exe = os.path.join(base, relative)
+            if os.path.isfile(exe):
+                subprocess.Popen(
+                    [exe, f"--app={url}", "--new-window"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                return True
+    return False
+
+
 def open_browser(url: str):
     for _ in range(40):
         if port_open("127.0.0.1", int(os.environ["PORT"])):
-            webbrowser.open(url)
+            if not open_app_window(url):
+                webbrowser.open(url)
             return
         time.sleep(0.25)
 
@@ -75,12 +105,14 @@ def main():
         if port_open("127.0.0.1", port):
             if running_version(port) == appmod.APP_VERSION:
                 print(f"Daftarchi already running at {url}")
-                webbrowser.open(url)
+                if not open_app_window(url):
+                    webbrowser.open(url)
                 return
             stop_port(port)
             time.sleep(0.6)
             if port_open("127.0.0.1", port):
-                webbrowser.open(url)
+                if not open_app_window(url):
+                    webbrowser.open(url)
                 return
 
         threading.Thread(target=open_browser, args=(url,), daemon=True).start()
