@@ -91,8 +91,10 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.2"
+APP_VERSION = "1.0.3"
 UPDATE_MANIFEST_URL = "https://webakery.ir/daftarchi/version.json"
+HOST_MAIL_URL = "https://webakery.ir/daftarchi/mail.php"
+HOST_MAIL_KEY = "daftarchi-webakery-mail"
 SMS_PROVIDERS = {"internal", "kavenegar", "melipayamak"}
 BOOL_KEYS = {"gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock"}
 SYSTEM_ACCOUNTS = [
@@ -651,7 +653,7 @@ def session_figures(conn, sess) -> dict:
     license_cash = license_sum("cash")
     cash_receipts = receipt_sum("cash")
     opening = int(sess["opening_cash"])
-    expected = opening + cash_sales + license_cash + cash_receipts - cash_purchases
+    expected = opening + cash_sales + cash_receipts - cash_purchases
     counted = sess["counted_cash"]
     return {
         "opening": opening,
@@ -842,21 +844,45 @@ def smtp_ready(settings: dict) -> bool:
 
 
 def explain_gmail(detail: str) -> str:
+    return explain_host_mail(detail)
+
+
+def explain_host_mail(detail: str) -> str:
     text = str(detail or "")
     low = text.lower()
-    if "تنظیم نشده" in text or not text.strip():
+    if "اتصال" in text or "timed out" in low or "timeout" in low or "unreachable" in low:
+        return "اتصال به هاست وب‌بیکری برقرار نشد. تأیید حساب و بازیابی رمز بدون هاست ممکن نیست."
+    if "mail" in low or "key" in low or "fields" in low or "تنظیم نشده" in text:
         return (
-            "کد به جیمیل نرفت. در تنظیمات دفترچی، بخش جیمیل، آدرس جیمیل فروشگاه و رمز برنامه (App Password) را ذخیره کنید. "
-            "رمز ورود معمولی جیمیل قبول نیست."
+            "هاست کد را به جیمیل نفرستاد. فایل mail.php را در public_html/daftarchi کنار version.json بگذارید. "
+            "نامه از هاست به جیمیل خریدار می‌رود، نه از رمز ورود جیمیل روی همین رایانه."
         )
-    if "535" in low or "badcredentials" in low or "username and password not accepted" in low:
-        return (
-            "جیمیل رمز را نپذیرفت. رمز ورود معمولی کار نمی‌کند. در حساب گوگل یک App Password بسازید "
-            "و همان ۱۶ حرف را در خانه «رمز برنامه جیمیل» بنویسید."
+    return f"ارسال کد از هاست به جیمیل ناموفق بود: {text[:180]}"
+
+
+def host_mail_ready() -> bool:
+    try:
+        status, body = http_request("GET", HOST_MAIL_URL, timeout=4)
+    except AppError:
+        return False
+    return status < 400 and isinstance(body, dict) and bool(body.get("ok")) and body.get("service") == "daftarchi-mail"
+
+
+def send_host_mail(recipient: str, subject: str, text: str) -> None:
+    try:
+        status, body = http_request(
+            "POST",
+            HOST_MAIL_URL,
+            payload={"key": HOST_MAIL_KEY, "to": recipient, "subject": subject, "text": text},
+            timeout=12,
         )
-    if "timed out" in low or "timeout" in low or "unexpectedly closed" in low or "connection reset" in low:
-        return "ارتباط با جیمیل قطع شد. اینترنت را بررسی کنید. اگر رمز را نوشته‌اید، باید رمز برنامه باشد نه رمز ورود جیمیل."
-    return f"ارسال کد به جیمیل ناموفق بود: {text[:180]}"
+    except AppError as exc:
+        raise AppError(explain_host_mail(str(exc)), 502) from exc
+    if status >= 400 or not isinstance(body, dict) or not body.get("ok"):
+        detail = ""
+        if isinstance(body, dict):
+            detail = str(body.get("error") or "")
+        raise AppError(explain_host_mail(detail or f"HTTP {status}"), 502)
 
 
 def store_code(conn, user_id: int, channel: str) -> str:
@@ -875,9 +901,7 @@ def store_code(conn, user_id: int, channel: str) -> str:
     return code
 
 
-def send_gmail_code(conn, settings: dict, recipient: str, user_id: int, purpose: str) -> None:
-    if not smtp_ready(settings):
-        raise AppError(explain_gmail("تنظیم نشده"))
+def send_gmail_code(conn, _settings: dict, recipient: str, user_id: int, purpose: str) -> None:
     channel = "verify" if purpose == "verify" else "email"
     code = store_code(conn, user_id, channel)
     if purpose == "verify":
@@ -890,9 +914,11 @@ def send_gmail_code(conn, settings: dict, recipient: str, user_id: int, purpose:
     else:
         subject = "بازیابی رمز دفترچی"
         text = f"کد بازیابی رمز دفترچی: {code}\nاین کد تا ۱۰ دقیقه معتبر است."
-    status, detail = deliver_email(conn, settings, recipient, subject, text)
-    if status != "sent":
-        raise AppError(explain_gmail(detail))
+    send_host_mail(recipient, subject, text)
+    conn.execute(
+        "INSERT INTO notifications (channel, recipient, body, status, detail, created_at) VALUES ('email',?,?,?,?,?)",
+        (recipient, f"{subject}\n{text}", "sent", "هاست وب‌بیکری", iso()),
+    )
 
 
 def version_tuple(value: str) -> tuple[int, ...]:
@@ -1519,9 +1545,10 @@ def bootstrap():
         settings = get_settings(conn)
         flag = settings.get("must_change_password") == "1"
         ready = smtp_ready(settings)
+    extra = {"smtp_ready": ready, "host_mail": host_mail_ready(), "version": APP_VERSION}
     if flag:
-        return jsonify(initial=True, phone=INITIAL_PHONE, password=INITIAL_PASSWORD, smtp_ready=ready, version=APP_VERSION)
-    return jsonify(initial=False, smtp_ready=ready, version=APP_VERSION)
+        return jsonify(initial=True, phone=INITIAL_PHONE, password=INITIAL_PASSWORD, **extra)
+    return jsonify(initial=False, **extra)
 
 
 @app.post("/api/auth/login")
@@ -1592,18 +1619,11 @@ def register():
                     (name, phone, email, hash_pw(password), role, iso()),
                 )
                 user_id = cur.lastrowid
-        mailed = False
-        if not reopen and smtp_ready(settings):
-            try:
-                send_gmail_code(conn, settings, email, user_id, "verify")
-                mailed = True
-            except Exception:
-                mailed = False
-        if mailed:
+        if not reopen:
+            send_gmail_code(conn, settings, email, user_id, "verify")
             return jsonify(ok=True, email=email, needs_verify=True, delivery="email")
         conn.execute("UPDATE users SET email_verified=1 WHERE id=?", (user_id,))
         fresh = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
-        clear_initial_secret(conn, fresh)
         flag = get_settings(conn).get("must_change_password") == "1"
         user = public_user(fresh)
     session.clear()
@@ -1665,12 +1685,9 @@ def attach_email():
         if other:
             raise AppError("این جیمیل برای کاربر دیگری است")
         settings = get_settings(conn)
-        if smtp_ready(settings):
-            conn.execute("UPDATE users SET email=?, email_verified=0 WHERE id=?", (email, user["id"]))
-            send_gmail_code(conn, settings, email, user["id"], "verify")
-            return jsonify(ok=True, email=email, needs_verify=True)
-        conn.execute("UPDATE users SET email=?, email_verified=1 WHERE id=?", (email, user["id"]))
-    return jsonify(ok=True, email=email, needs_verify=False)
+        conn.execute("UPDATE users SET email=?, email_verified=0 WHERE id=?", (email, user["id"]))
+        send_gmail_code(conn, settings, email, user["id"], "verify")
+    return jsonify(ok=True, email=email, needs_verify=True)
 
 
 @app.post("/api/auth/logout")
@@ -1715,13 +1732,9 @@ def forgot():
         if "@" in ident:
             if not user["email"]:
                 raise AppError("برای این حساب جیمیل ثبت نشده")
-            if smtp_ready(settings):
-                send_gmail_code(conn, settings, user["email"], user["id"], "reset")
-                status, detail, channel = "sent", "جیمیل", "email"
-                code = None
-            else:
-                code = store_code(conn, user["id"], "email")
-                status, detail, channel = "internal", "کد روی همین دستگاه ساخته شد", "email"
+            send_gmail_code(conn, settings, user["email"], user["id"], "reset")
+            status, detail, channel = "sent", "جیمیل", "email"
+            code = None
         else:
             code = store_code(conn, user["id"], "sms")
             text = f"کد بازیابی رمز دفترچی: {code}\nاین کد تا ۱۰ دقیقه معتبر است."
@@ -2640,14 +2653,6 @@ def mark_license_paid(conn, license_id: int, user_id: int, ref: str):
     )
     if updated.rowcount != 1:
         return conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
-    lines = []
-    if row["payable"]:
-        lines.append((acc(conn, "1020")["id"], int(row["payable"]), 0))
-    if row["discount"]:
-        lines.append((acc(conn, "4100")["id"], int(row["discount"]), 0))
-    if row["list_price"]:
-        lines.append((acc(conn, "4200")["id"], 0, int(row["list_price"])))
-    post_entry(conn, f"لایسنس {title} برای {row['buyer_name']}", lines, "license", license_id, user_id)
     return conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
 
 
@@ -2706,7 +2711,6 @@ def sell_license():
         payable = list_price - discount
         if method == "gateway" and payable < 1000:
             raise AppError("حداقل مبلغ درگاه ۱۰۰۰ تومان است")
-        sess = None if method == "gateway" else require_open(conn)
         start = now_dt().replace(microsecond=0)
         end = add_months(start, months)
         status = "pending" if method == "gateway" else "paid"
@@ -2716,19 +2720,11 @@ def sell_license():
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 plan, list_price, discount, payable, buyer, phone, iso(start), iso(end), method,
-                sess["id"] if sess else None, user["id"], iso(), status,
+                None, user["id"], iso(), status,
             ),
         )
         license_id = cur.lastrowid
         if method != "gateway":
-            lines = []
-            if payable:
-                lines.append((acc(conn, "1000" if method == "cash" else "1010")["id"], payable, 0))
-            if discount:
-                lines.append((acc(conn, "4100")["id"], discount, 0))
-            if list_price:
-                lines.append((acc(conn, "4200")["id"], 0, list_price))
-            post_entry(conn, f"لایسنس {title} برای {buyer}", lines, "license", license_id, user["id"])
             saved = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
     if method == "gateway":
         try:
@@ -2927,10 +2923,9 @@ def test_setting(kind: str):
             status, detail = deliver_sms(conn, settings, phone, "پیام آزمایشی دفترچی")
             message = "پیامک ارسال شد" if status == "sent" else detail
         elif kind == "email":
-            if not smtp_ready(settings):
-                raise AppError(explain_gmail("تنظیم نشده"))
-            status, detail = deliver_email(conn, settings, settings["smtp_user"], "آزمایش دفترچی", "این یک پیام آزمایشی از دفترچی است.")
-            message = "ایمیل آزمایشی به جیمیل فرستاده شد" if status == "sent" else explain_gmail(detail)
+            if not host_mail_ready():
+                raise AppError(explain_host_mail("تنظیم نشده"), 502)
+            message = "هاست وب‌بیکری برای فرستادن کد به جیمیل پاسخ داد"
         else:
             raise AppError("آزمایش نامعتبر است")
     return jsonify(ok=True, message=message)

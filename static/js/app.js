@@ -5,7 +5,7 @@ const NAV = [
   ["inventory", "انبار", "admin"],
   ["accounts", "حسابداری", "admin"],
   ["register", "صندوق"],
-  ["licenses", "لایسنس", "admin"],
+  ["licenses", "لایسنس اپ", "admin"],
   ["customers", "مشتریان"],
   ["sms", "پیامک", "admin"],
   ["settings", "تنظیمات", "admin"],
@@ -305,7 +305,7 @@ function authHtml() {
   if (state.authView === "register") {
     return `<div class="auth"><form class="card auth-card" data-act="register">
       <div class="brand"><div class="mark">${logo()}</div><div><strong>ساخت حساب</strong><span>با جیمیل</span></div></div>
-      <p class="hint">نام، موبایل، جیمیل و رمز دفترچی کافی است. به هاست و حساب گوگل کاری نیست.</p>
+      <p class="hint">کد تأیید از هاست وب‌بیکری به همین جیمیل می‌رود. بدون اتصال به هاست حساب ساخته نمی‌شود.</p>
       ${authProblem()}
       <div class="field"><label>نام</label><input name="name" required value="${esc(draft.name || "")}"></div>
       <div class="field"><label>موبایل</label><input class="ltr" name="phone" required placeholder="09..." value="${esc(draft.phone || "")}"></div>
@@ -333,6 +333,7 @@ function authHtml() {
     return `<div class="auth"><form class="card auth-card" data-act="forgot">
       <div class="brand"><div class="mark">${logo()}</div><div><strong>فراموشی رمز</strong><span>با جیمیل یا موبایل</span></div></div>
       ${authProblem()}
+      <p class="hint">اگر جیمیل بدهید، کد بازیابی از هاست وب‌بیکری به همان جیمیل می‌رود.</p>
       <div class="field"><label>موبایل یا جیمیل</label><input name="ident" required value="${esc(draft.ident || "")}"></div>
       <button class="btn primary block" type="submit">دریافت کد</button>
       <button class="btn block" type="button" data-act="show-login">بازگشت</button>
@@ -526,7 +527,7 @@ function accountsHtml() {
 function figuresHtml(figures) {
   const rows = [
     ["موجودی اول", figures.opening], ["فروش نقد", figures.cash_sales], ["فروش کارت", figures.card_sales],
-    ["فروش درگاه", figures.gateway_sales], ["فروش نسیه", figures.credit_sales], ["لایسنس نقد", figures.license_cash],
+    ["فروش درگاه", figures.gateway_sales], ["فروش نسیه", figures.credit_sales],
     ["دریافت طلب", figures.cash_receipts], ["خرید نقدی", figures.cash_purchases], ["مورد انتظار", figures.expected_cash],
   ];
   return `<table>${rows.map(([label, value]) => `<tr><th>${label}</th><td class="num">${money(value)}</td></tr>`).join("")}</table>`;
@@ -555,11 +556,13 @@ function licensesHtml() {
   const plans = data.plans.map((plan) => `<button type="button" class="plan ${state.plan === plan.id ? "on" : ""}" data-act="pick-plan" data-plan="${plan.id}"><span>${esc(plan.title)}</span><em class="num">${money(plan.price)}</em>${plan.remaining != null ? `<span>باقی‌مانده ${num(plan.remaining)} از ${num(plan.cap)}</span>` : ""}</button>`).join("");
   return `<div class="stack"><div class="plans">${plans}</div>
     <section class="card"><form data-act="sell-license"><input type="hidden" name="plan" value="${esc(state.plan)}">
+      <h2 class="section-title">لایسنس دفترچی برای خریدار اپ</h2>
+      <p class="hint">این بخش فروش لایسنس برنامه به خریدار است، نه سند حسابداری فروشگاه. وارد صندوق و دفتر نمی‌شود.</p>
       <div class="grid-2"><div class="field"><label>نام خریدار</label><input name="buyer_name" required></div><div class="field"><label>شماره تماس</label><input class="ltr" name="phone" required></div></div>
       <div class="grid-2"><div class="field"><label>تخفیف</label><input name="discount_value" value="0"></div><div class="field"><label>نوع تخفیف</label><select name="discount_type"><option value="amount">مبلغ</option><option value="percent">درصد</option></select></div></div>
       <div class="field"><label>پرداخت</label><select name="payment_method"><option value="cash">نقد</option><option value="card">کارت</option><option value="gateway">درگاه وب‌بیکری</option></select></div>
-      <button class="btn primary" type="submit">ثبت لایسنس</button>
-      <p class="hint">پرداخت آنلاین لایسنس از درگاه زیبال وب‌بیکری انجام می‌شود و بعد از تأیید، لایسنس فعال می‌شود.</p></form>
+      <button class="btn primary" type="submit">ثبت لایسنس خریدار</button>
+      <p class="hint">پرداخت آنلاین از درگاه زیبال وب‌بیکری است. بعد از تأیید، لایسنس خریدار فعال می‌شود.</p></form>
       <details><summary>قیمت‌ها و ظرفیت پنجاه‌ساله</summary><form data-act="save-prices"><div class="grid-2">
         ${[["price_3m", "سه ماهه"], ["price_6m", "شش ماهه"], ["price_12m", "یک ساله"], ["price_50y", "پنجاه ساله"], ["cap_50y", "ظرفیت پنجاه ساله"]].map(([key, label]) => {
           const plan = data.plans.find((item) => item.id === { price_3m: "3m", price_6m: "6m", price_12m: "12m", price_50y: "50y" }[key]);
@@ -633,18 +636,18 @@ function settingsHtml() {
       <label class="check"><input type="checkbox" name="sms_low_stock" ${checked("sms_low_stock")}>پیامک موجودی کم</label>
       <button type="button" class="btn" data-act="test-setting" data-kind="sms">پیام آزمایشی</button>
     </section>
-    <section class="card"><h2 class="section-title">جیمیل، اختیاری</h2>
-      ${field("smtp_user", "آدرس جیمیل فروشگاه")}${field("smtp_password", "رمز برنامه گوگل", "password")}
-      <button type="button" class="btn" data-act="test-setting" data-kind="email">ایمیل آزمایشی</button>
-      <p class="hint">فقط برای فرستادن کد تأیید و بازیابی رمز لازم است: آدرس جیمیل فروشگاه و رمز برنامه گوگل. رمز ورود معمولی جیمیل قبول نمی‌شود. هاست لازم نیست. اگر خالی بماند، ساخت حساب باز می‌شود و ایمیلی فرستاده نمی‌شود.</p>
+    <section class="card"><h2 class="section-title">جیمیل حساب کاربری</h2>
+      <button type="button" class="btn" data-act="test-setting" data-kind="email">آزمایش هاست جیمیل</button>
+      <p class="hint">کد تأیید و بازیابی رمز از هاست وب‌بیکری به جیمیل می‌رود. فایل mail.php باید در public_html/daftarchi باشد. رمز ورود جیمیل روی این رایانه لازم نیست.</p>
     </section>
     <section class="card"><h2 class="section-title">جای فایل‌های آپدیت</h2>
       <p class="hint">نسخه نصب‌شده: ${esc(state.update?.current || "")}. دفترچی این آدرس را می‌خواند:</p>
       <p class="ltr">https://webakery.ir/daftarchi/version.json</p>
-      <p class="hint">روی هاست، کنار پوشه wp-admin، پوشه daftarchi را بسازید و فقط همین دو فایل را داخلش بگذارید:</p>
+      <p class="hint">روی هاست، کنار پوشه wp-admin، پوشه daftarchi را بسازید و این فایل‌ها را داخلش بگذارید:</p>
       <p class="ltr">version.json</p>
       <p class="ltr">Daftarchi-Setup.exe</p>
-      <p class="hint">نصب‌کننده را دانلود کنید و روی همین رایانه اجرا کنید. نسخه قبلی را از ویندوز حذف نکنید. فایل جدید روی همان پوشه می‌نشیند و پوشه data پاک نمی‌شود.</p>
+      <p class="ltr">mail.php</p>
+      <p class="hint">نصب‌کننده را روی همین دفترچی اجرا کنید. mail.php را هم روی هاست بگذارید تا تأیید حساب و بازیابی رمز کار کند. پوشه data پاک نمی‌شود.</p>
     </section>
     <button class="btn primary" type="submit">ذخیره تنظیمات</button>
   </form>
