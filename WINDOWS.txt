@@ -3,21 +3,20 @@
 نصب ویندوز:
 https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Setup.exe
 
-دو فایل کوچک هاست، یکجا:
+فایل‌های هاست، یکجا:
 https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Host.zip
 
-یا جدا جدا:
-https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/version.json
-https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/mail.php
+اگر در File Manager اسم‌ها mailphp و versionjson است، نقطه ندارند.
+Rename کنید به:
 
-بعد از دانلود، روی هاست کنار wp-admin پوشه daftarchi را بسازید و این سه را داخلش بگذارید:
+  mail.php
+  version.json
 
-  public_html/daftarchi/version.json
-  public_html/daftarchi/mail.php
-  public_html/daftarchi/Daftarchi-Setup.exe
+نقطه بین اسم و پسوند واجب است.
 
-نسخه جدید را روی همان دفترچی قبلی نصب کنید. حذف نکنید.
+بعد index.php و .htaccess را هم از همان زیپ در public_html/daftarchi بگذارید.
 
-ورود اولیه، فقط اگر هنوز حساب نساخته‌اید: 09120000000 / daftarchi
-آدرس: http://127.0.0.1:8080
-پایین صفحه ورود باید نسخه ۱.۰.۳ دیده شود.
+اگر این آدرس نوشت ok و daftarchi-mail، درست است:
+https://webakery.ir/daftarchi/mail.php
+
+ورود اولیه: 09120000000 / daftarchi
