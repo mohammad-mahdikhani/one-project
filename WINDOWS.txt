@@ -1,26 +1,23 @@
-فایل نصبی فروش:
+دانلود از گیت‌هاب، نه از خود هاست:
 
-https://github.com/mohammad-mahdikhani/one-project/raw/cursor/accounting-ledger-56dd/Daftarchi-Setup.exe
+نصب ویندوز:
+https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Setup.exe
 
-نسخه جدید را روی همان دفترچی قبلی نصب کنید.
-برنامه را از ویندوز حذف نکنید.
+دو فایل کوچک هاست، یکجا:
+https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Host.zip
 
-روی هاست، کنار wp-admin، پوشه daftarchi را بسازید و این سه فایل را بگذارید:
+یا جدا جدا:
+https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/version.json
+https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/mail.php
+
+بعد از دانلود، روی هاست کنار wp-admin پوشه daftarchi را بسازید و این سه را داخلش بگذارید:
 
   public_html/daftarchi/version.json
-  public_html/daftarchi/Daftarchi-Setup.exe
   public_html/daftarchi/mail.php
+  public_html/daftarchi/Daftarchi-Setup.exe
 
-بدون mail.php روی هاست، ساخت حساب با جیمیل و بازیابی رمز کار نمی‌کند.
+نسخه جدید را روی همان دفترچی قبلی نصب کنید. حذف نکنید.
 
 ورود اولیه، فقط اگر هنوز حساب نساخته‌اید: 09120000000 / daftarchi
 آدرس: http://127.0.0.1:8080
 پایین صفحه ورود باید نسخه ۱.۰.۳ دیده شود.
-
-لایسنس اپ برای خریدار برنامه است، نه سند حسابداری فروشگاه.
-
-ساخت حساب: نام، موبایل، جیمیل، رمز. کد تأیید از هاست به جیمیل می‌رود.
-بازیابی رمز با جیمیل هم از همان هاست است.
-
-حذف برنامه از منوی استارت، «حذف دفترچی»، یا از تنظیمات ویندوز.
-اطلاعات فروشگاه در پوشه نصب می‌ماند.

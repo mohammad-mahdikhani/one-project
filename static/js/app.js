@@ -643,11 +643,10 @@ function settingsHtml() {
     <section class="card"><h2 class="section-title">جای فایل‌های آپدیت</h2>
       <p class="hint">نسخه نصب‌شده: ${esc(state.update?.current || "")}. دفترچی این آدرس را می‌خواند:</p>
       <p class="ltr">https://webakery.ir/daftarchi/version.json</p>
-      <p class="hint">روی هاست، کنار پوشه wp-admin، پوشه daftarchi را بسازید و این فایل‌ها را داخلش بگذارید:</p>
-      <p class="ltr">version.json</p>
-      <p class="ltr">Daftarchi-Setup.exe</p>
-      <p class="ltr">mail.php</p>
-      <p class="hint">نصب‌کننده را روی همین دفترچی اجرا کنید. mail.php را هم روی هاست بگذارید تا تأیید حساب و بازیابی رمز کار کند. پوشه data پاک نمی‌شود.</p>
+      <p class="hint">این فایل‌ها را از گیت‌هاب دانلود کنید، نه از خود هاست. بعد روی هاست در public_html/daftarchi بگذارید:</p>
+      <p class="ltr">https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Host.zip</p>
+      <p class="ltr">https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Setup.exe</p>
+      <p class="hint">زیپ را باز کنید. version.json و mail.php را با فایل نصب در همان پوشه هاست بگذارید.</p>
     </section>
     <button class="btn primary" type="submit">ذخیره تنظیمات</button>
   </form>

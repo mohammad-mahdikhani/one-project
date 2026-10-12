@@ -1,4 +1,9 @@
-فایل‌های آپدیت و نامه جیمیل دفترچی دقیقاً همین‌جا روی سایت قرار می‌گیرند، نه داخل پوشه نصب ویندوز.
+دانلود این فایل‌ها از گیت‌هاب است، نه از خود هاست:
+
+https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Host.zip
+https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Setup.exe
+
+فایل‌های آپدیت و نامه جیمیل دفترچی بعد از دانلود، همین‌جا روی سایت قرار می‌گیرند.
 
 روی هاست webakery.ir، کنار پوشه wp-admin، این پوشه را بسازید:
 
