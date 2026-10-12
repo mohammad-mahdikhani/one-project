@@ -553,16 +553,15 @@ function registerHtml() {
 function licensesHtml() {
   const data = state.licenses;
   if (!data) return "";
-  const plans = data.plans.map((plan) => `<button type="button" class="plan ${state.plan === plan.id ? "on" : ""}" data-act="pick-plan" data-plan="${plan.id}"><span>${esc(plan.title)}</span><em class="num">${money(plan.price)}</em>${plan.remaining != null ? `<span>باقی‌مانده ${num(plan.remaining)} از ${num(plan.cap)}</span>` : ""}</button>`).join("");
+  const plans = data.plans.map((plan) => `<button type="button" class="plan ${state.plan === plan.id ? "on" : ""}" data-act="pick-plan" data-plan="${plan.id}"><span>${esc(plan.title)}</span><em class="num">${money(plan.price)}</em><span>پرداخت در زیبال</span>${plan.remaining != null ? `<span>باقی‌مانده ${num(plan.remaining)} از ${num(plan.cap)}</span>` : ""}</button>`).join("");
   return `<div class="stack"><div class="plans">${plans}</div>
     <section class="card"><form data-act="sell-license"><input type="hidden" name="plan" value="${esc(state.plan)}">
       <h2 class="section-title">لایسنس دفترچی برای خریدار اپ</h2>
-      <p class="hint">این بخش فروش لایسنس برنامه به خریدار است، نه سند حسابداری فروشگاه. وارد صندوق و دفتر نمی‌شود.</p>
-      <div class="grid-2"><div class="field"><label>نام خریدار</label><input name="buyer_name" required></div><div class="field"><label>شماره تماس</label><input class="ltr" name="phone" required></div></div>
+      <p class="hint">روی هر طرح بزنید. صفحه خرید زیبال همان لحظه باز می‌شود. این مبلغ وارد صندوق و دفتر فروشگاه نمی‌شود.</p>
+      <div class="grid-2"><div class="field"><label>نام خریدار</label><input name="buyer_name" placeholder="اگر خالی بماند، نام همین کاربر"></div><div class="field"><label>شماره تماس</label><input class="ltr" name="phone" placeholder="اگر خالی بماند، موبایل همین کاربر"></div></div>
       <div class="grid-2"><div class="field"><label>تخفیف</label><input name="discount_value" value="0"></div><div class="field"><label>نوع تخفیف</label><select name="discount_type"><option value="amount">مبلغ</option><option value="percent">درصد</option></select></div></div>
-      <div class="field"><label>پرداخت</label><select name="payment_method"><option value="cash">نقد</option><option value="card">کارت</option><option value="gateway">درگاه وب‌بیکری</option></select></div>
-      <button class="btn primary" type="submit">ثبت لایسنس خریدار</button>
-      <p class="hint">پرداخت آنلاین از درگاه زیبال وب‌بیکری است. بعد از تأیید، لایسنس خریدار فعال می‌شود.</p></form>
+      <button class="btn primary" type="submit">پرداخت در زیبال</button>
+      <p class="hint">بعد از پرداخت در زیبال، برگردید و «استعلام تأیید» را بزنید تا لایسنس فعال شود.</p></form>
       <details><summary>قیمت‌ها و ظرفیت پنجاه‌ساله</summary><form data-act="save-prices"><div class="grid-2">
         ${[["price_3m", "سه ماهه"], ["price_6m", "شش ماهه"], ["price_12m", "یک ساله"], ["price_50y", "پنجاه ساله"], ["cap_50y", "ظرفیت پنجاه ساله"]].map(([key, label]) => {
           const plan = data.plans.find((item) => item.id === { price_3m: "3m", price_6m: "6m", price_12m: "12m", price_50y: "50y" }[key]);
@@ -718,6 +717,38 @@ function render() {
   }
 }
 
+function closePopup(popup) {
+  try { if (popup && !popup.closed) popup.close(); } catch { /* پنجره را مرورگر بسته است */ }
+}
+
+async function buyLicense(plan, preset, popup) {
+  state.plan = plan;
+  const form = document.querySelector('form[data-act="sell-license"]');
+  const data = preset ? { ...preset } : (form ? Object.fromEntries(new FormData(form).entries()) : {});
+  data.plan = plan;
+  data.payment_method = "gateway";
+  if (!String(data.buyer_name || "").trim()) data.buyer_name = state.user?.name || "خریدار";
+  if (!String(data.phone || "").trim()) data.phone = state.user?.phone || "";
+  if (!String(data.discount_value || "").trim()) data.discount_value = "0";
+  if (!data.discount_type) data.discount_type = "amount";
+  try {
+    const result = await api("/api/licenses", { method: "POST", body: data });
+    const url = result.license?.pay_url || "";
+    if (!url) {
+      closePopup(popup);
+      throw new Error("زیبال صفحه پرداخت نداد");
+    }
+    if (popup && !popup.closed) popup.location.href = url;
+    else location.assign(url);
+    state.modal = { type: "license", license: result.license };
+    await loaders.licenses();
+    render();
+  } catch (err) {
+    closePopup(popup);
+    throw err;
+  }
+}
+
 async function onSubmit(event) {
   const form = event.target.closest("form[data-act]");
   if (!form) return;
@@ -725,6 +756,7 @@ async function onSubmit(event) {
   const act = form.dataset.act;
   const data = Object.fromEntries(new FormData(form).entries());
   if (!state.user) state.authDraft = data;
+  const licensePopup = act === "sell-license" && !state.busy ? window.open("about:blank", "_blank") : null;
   await guard(async () => {
     if (act === "login") {
       try {
@@ -821,14 +853,7 @@ async function onSubmit(event) {
       await loaders.register();
       render();
     } else if (act === "sell-license") {
-      data.plan = state.plan;
-      const result = await api("/api/licenses", { method: "POST", body: data });
-      if (result.license?.status === "pending") {
-        state.modal = { type: "license", license: result.license };
-        toast("لینک پرداخت وب‌بیکری آماده است");
-      } else toast(`لایسنس ثبت شد: ${money(result.payable)}`);
-      await loaders.licenses();
-      render();
+      await buyLicense(state.plan, data, licensePopup);
     } else if (act === "save-prices") {
       await api("/api/licenses/prices", { method: "PUT", body: data });
       await loaders.licenses();
@@ -951,7 +976,11 @@ async function onClick(event) {
   }
   if (act === "nav") { await guard(() => navigate(el.dataset.page)); return; }
   if (act === "chart") { state.chart = el.dataset.range; render(); return; }
-  if (act === "pick-plan") { state.plan = el.dataset.plan; render(); return; }
+  if (act === "pick-plan") {
+    const popup = window.open("about:blank", "_blank");
+    await guard(() => buyLicense(el.dataset.plan, null, popup));
+    return;
+  }
   if (act === "print") { window.print(); return; }
   if (act === "password-modal") { state.modal = { type: "password" }; render(); return; }
   await guard(async () => {

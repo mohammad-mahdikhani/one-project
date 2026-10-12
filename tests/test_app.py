@@ -527,7 +527,11 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.0.4")
+        self.assertEqual(appmod.APP_VERSION, "1.0.5")
+        script = Path("/workspace/static/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("async function buyLicense", script)
+        self.assertIn('data.payment_method = "gateway"', script)
+        self.assertIn("popup.location.href = url", script)
         text = Path("/workspace/windows/installer/installer.nsi").read_text(encoding="utf-8")
         self.assertNotIn("MUI_PAGE_DIRECTORY", text)
         self.assertIn("Call StopDaftarchi", text)
@@ -547,7 +551,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.0.4")
+        self.assertEqual(boot["version"], "1.0.5")
         self.assertTrue(boot["host_mail"])
 
 
