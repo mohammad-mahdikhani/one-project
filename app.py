@@ -748,6 +748,8 @@ def http_request(method: str, url: str, payload=None, headers=None, form=None, t
         return exc.code, parse_body(exc.read())
     except urllib.error.URLError as exc:
         raise AppError(f"اتصال برقرار نشد: {exc.reason}", 502)
+    except TimeoutError as exc:
+        raise AppError("اتصال برقرار نشد: زمان درخواست تمام شد", 502) from exc
 
 
 def woo_url(settings: dict, path: str, extra: dict | None = None) -> str:
