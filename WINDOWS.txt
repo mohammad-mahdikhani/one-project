@@ -1,14 +1,9 @@
 دانلود از گیت‌هاب، نه از خود هاست:
 
-بدون نصب، زیپ را در یک پوشه باز کنید و دفترچی.bat را بزنید:
-https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Portable.zip
+فایل را بزنید تا دفترچی باز شود. صفحه نصب ندارد:
+https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi.exe
 
-اگر دفترچی از قبل نصب است و فروش دارد، پوشه data را از
-%LOCALAPPDATA%\Daftarchi\data
-کنار همین زیپ کپی کنید. با باز کردن زیپ تازه، پوشه data پاک نمی‌شود.
-
-نصب ویندوز، اگر نصب می‌خواهید:
-https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Setup.exe
+فروش و حساب‌ها سر جایشان می‌مانند.
 
 فایل‌های هاست، یکجا:
 https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Host.zip
