@@ -37,7 +37,8 @@ const state = {
   cart: [],
   discountType: "amount",
   discountValue: "",
-  buyerName: "",
+  buyerFirst: "",
+  buyerLast: "",
   buyerPhone: "",
   posQuery: "",
   pending: [],
@@ -245,7 +246,8 @@ function syncPos() {
   };
   read("discount", "discountValue");
   read("discount-type", "discountType");
-  read("buyer-name", "buyerName");
+  read("buyer-first", "buyerFirst");
+  read("buyer-last", "buyerLast");
   read("buyer-phone", "buyerPhone");
   read("pos-query", "posQuery");
 }
@@ -452,8 +454,12 @@ function posHtml() {
         <div class="field"><label>تخفیف</label><input id="discount" value="${esc(state.discountValue)}" inputmode="numeric"></div>
         <div class="field"><label>نوع</label><select id="discount-type"><option value="amount" ${state.discountType === "amount" ? "selected" : ""}>مبلغ</option><option value="percent" ${state.discountType === "percent" ? "selected" : ""}>درصد</option></select></div>
       </div>
-      <div class="field"><label>نام خریدار</label><input id="buyer-name" value="${esc(state.buyerName)}"></div>
-      <div class="field"><label>شماره تماس</label><input id="buyer-phone" class="ltr" value="${esc(state.buyerPhone)}" placeholder="09..."></div>
+      <div class="grid-2">
+        <div class="field"><label>نام</label><input id="buyer-first" value="${esc(state.buyerFirst)}" autocomplete="off"></div>
+        <div class="field"><label>نام خانوادگی</label><input id="buyer-last" value="${esc(state.buyerLast)}" autocomplete="off"></div>
+      </div>
+      <div class="field"><label>شماره موبایل</label><input id="buyer-phone" class="ltr" value="${esc(state.buyerPhone)}" inputmode="tel" autocomplete="off" placeholder="09..."></div>
+      <p class="hint">خرید حضوری بدون نام، نام خانوادگی و موبایل تمام نمی‌شود. پیامک ثبت خرید به همین شماره می‌رود.</p>
       <p>جمع <strong class="num" id="pay-sub">${money(subtotal)}</strong></p>
       <p>تخفیف <strong class="num" id="pay-disc">${money(discount)}</strong></p>
       <p>قابل پرداخت <strong class="num" id="pay-due">${money(payable)}</strong></p>
@@ -640,7 +646,8 @@ function settingsHtml() {
       <div class="grid-2">${field("sms_username", "نام کاربری ملی‌پیامک")}${field("sms_password", "رمز ملی‌پیامک", "password")}</div>
       ${field("manager_phone", "موبایل مدیر")}${field("low_stock", "آستانه موجودی کم")}
       <label class="check"><input type="checkbox" name="sms_on_close" ${checked("sms_on_close")}>پیامک بعد از بستن صندوق</label>
-      <label class="check"><input type="checkbox" name="sms_on_sale" ${checked("sms_on_sale")}>پیامک هر فروش</label>
+      <label class="check"><input type="checkbox" name="sms_on_sale" ${checked("sms_on_sale")}>پیامک هر فروش به مدیر</label>
+      <p class="hint">پیامک خرید حضوری جداگانه به موبایل خود خریدار می‌رود، به شرط نام، نام خانوادگی و شماره.</p>
       <label class="check"><input type="checkbox" name="sms_low_stock" ${checked("sms_low_stock")}>پیامک موجودی کم</label>
       <button type="button" class="btn" data-act="test-setting" data-kind="sms">پیام آزمایشی</button>
     </section>
@@ -708,7 +715,7 @@ function modalHtml() {
   if (modal.type === "receipt") {
     const sale = modal.sale;
     const moadianLabel = { skipped: "شناسه کالا ندارد", failed: "ارسال نشد", sent: "در صف سامانه", pending: "در حال بررسی", success: "تأیید شد" }[sale.moadian_status] || "";
-    inner = `<div id="print-area"><h2>دفترچی</h2><p>فاکتور ${num(sale.id)} · ${esc(sale.at_jalali)}</p><p>${esc(sale.customer_name || "")} ${esc(sale.customer_phone || "")}</p><table>${modal.items.map((item) => `<tr><td>${esc(item.name)} × ${num(item.qty)}</td><td class="num">${money(item.line_total)}</td></tr>`).join("")}</table><p>تخفیف ${money(sale.discount)}</p><p><strong>قابل پرداخت ${money(sale.payable)}</strong></p><p>${PAY[sale.payment_method] || ""}</p>${moadianLabel ? `<p>سامانه مودیان: ${esc(moadianLabel)}</p>` : ""}${sale.moadian_taxid ? `<p class="ltr">${esc(sale.moadian_taxid)}</p>` : ""}</div>${sale.moadian_error ? `<p class="hint">${esc(sale.moadian_error)}</p>` : ""}<div class="row-actions"><button type="button" class="btn" data-act="print">چاپ</button>${sale.moadian_status === "success" ? "" : `<button type="button" class="btn primary" data-act="moadian-send" data-id="${sale.id}">ارسال به سامانه مودیان</button>`}${sale.moadian_reference ? `<button type="button" class="btn" data-act="moadian-inquiry" data-id="${sale.id}">استعلام مودیان</button>` : ""}</div>`;
+    inner = `<div id="print-area"><h2>دفترچی</h2><p>فاکتور ${num(sale.id)} · ${esc(sale.at_jalali)}</p><p>${esc(sale.customer_name || "")} ${esc(sale.customer_phone || "")}</p><table>${modal.items.map((item) => `<tr><td>${esc(item.name)} × ${num(item.qty)}</td><td class="num">${money(item.line_total)}</td></tr>`).join("")}</table><p>تخفیف ${money(sale.discount)}</p><p><strong>قابل پرداخت ${money(sale.payable)}</strong></p><p>${PAY[sale.payment_method] || ""}</p>${moadianLabel ? `<p>سامانه مودیان: ${esc(moadianLabel)}</p>` : ""}${sale.moadian_taxid ? `<p class="ltr">${esc(sale.moadian_taxid)}</p>` : ""}${modal.sms?.detail ? `<p>${esc(modal.sms.detail)}</p>` : ""}</div>${sale.moadian_error ? `<p class="hint">${esc(sale.moadian_error)}</p>` : ""}<div class="row-actions"><button type="button" class="btn" data-act="print">چاپ</button>${sale.moadian_status === "success" ? "" : `<button type="button" class="btn primary" data-act="moadian-send" data-id="${sale.id}">ارسال به سامانه مودیان</button>`}${sale.moadian_reference ? `<button type="button" class="btn" data-act="moadian-inquiry" data-id="${sale.id}">استعلام مودیان</button>` : ""}</div>`;
   }
   if (modal.type === "password") inner = `<form data-act="change-password"><h2 class="section-title">تغییر رمز</h2><div class="field"><label>رمز فعلی</label><input type="password" name="current" required></div><div class="field"><label>رمز جدید</label><input type="password" name="password" minlength="6" required></div><button class="btn primary" type="submit">ذخیره</button></form>
     <form data-act="attach-email"><h2 class="section-title">ورود با جیمیل</h2><p class="hint">همین جیمیل را ذخیره کنید و بعد با آن وارد شوید.</p><div class="field"><label>جیمیل</label><input class="ltr" name="email" type="email" value="${esc(state.user.email || "")}" required placeholder="name@gmail.com"></div><button class="btn primary" type="submit">ذخیره جیمیل</button></form>
@@ -975,8 +982,27 @@ async function saveJournal(data) {
   toast("سند ثبت شد");
   render();
 }
-async function submitSale(method, posRef) {
+function buyerReady() {
   syncPos();
+  const first = state.buyerFirst.trim();
+  const last = state.buyerLast.trim();
+  const phone = String(state.buyerPhone || "")
+    .replace(/[۰-۹]/g, (digit) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
+    .replace(/[٠-٩]/g, (digit) => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+    .replace(/\D/g, "");
+  if (first.length < 2 || last.length < 2) {
+    toast("نام و نام خانوادگی خریدار را بنویسید");
+    return null;
+  }
+  if (!/^09\d{9}$/.test(phone)) {
+    toast("شماره موبایل خریدار را وارد کنید");
+    return null;
+  }
+  return { first, last, phone };
+}
+async function submitSale(method, posRef) {
+  const buyer = buyerReady();
+  if (!buyer) return;
   if (!state.cart.length) return toast("سبد خالی است");
   const result = await api("/api/sales", {
     method: "POST",
@@ -985,19 +1011,22 @@ async function submitSale(method, posRef) {
       discount_type: state.discountType,
       discount_value: state.discountType === "percent" ? Math.round(asInt(state.discountValue)) : asInt(state.discountValue),
       payment_method: method,
-      customer_name: state.buyerName,
-      customer_phone: state.buyerPhone,
+      customer_first: buyer.first,
+      customer_last: buyer.last,
+      customer_phone: buyer.phone,
       pos_ref: posRef || "",
     },
   });
+  hideToast();
   if (result.sale.status === "pending") {
     state.modal = { type: "gateway", sale: result.sale };
   } else {
     state.cart = [];
     state.discountValue = "";
-    state.buyerName = "";
+    state.buyerFirst = "";
+    state.buyerLast = "";
     state.buyerPhone = "";
-    state.modal = { type: "receipt", sale: result.sale, items: result.items };
+    state.modal = { type: "receipt", sale: result.sale, items: result.items, sms: result.sms };
   }
   await loaders.pos();
   render();
@@ -1055,7 +1084,7 @@ async function onClick(event) {
       if (line.qty <= 0) state.cart = state.cart.filter((item) => item !== line);
       render();
     } else if (act === "pay") {
-      syncPos();
+      if (!buyerReady()) return;
       if (el.dataset.method === "card") {
         const prep = await api("/api/pos/prepare", { method: "POST", body: { amount: cartSubtotal() - cartDiscount() } });
         state.modal = { type: "card", message: prep.message, ok: prep.ok };
@@ -1087,7 +1116,7 @@ async function onClick(event) {
       const id = el.dataset.id;
       if (act === "verify-sale") {
         const result = await api(`/api/sales/${id}/confirm`, { method: "POST", body: { mode: "verify" } });
-        state.modal = { type: "receipt", sale: result.sale, items: result.items };
+        state.modal = { type: "receipt", sale: result.sale, items: result.items, sms: result.sms };
         state.cart = [];
       } else {
         const sale = state.pending.find((item) => item.id === Number(id));

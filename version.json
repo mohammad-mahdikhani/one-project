@@ -1,5 +1,5 @@
 {
-  "version": "1.0.7",
+  "version": "1.0.8",
   "url": "https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi.exe",
-  "notes": "اتصال به سامانه مودیان. ارسال آزمایشی روشن است تا صورتحساب واقعی نرود"
+  "notes": "خرید حضوری با نام، نام خانوادگی و موبایل تمام می‌شود و پیامک ثبت خرید به خریدار می‌رود"
 }

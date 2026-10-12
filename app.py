@@ -98,7 +98,7 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -459,6 +459,31 @@ def create_person_account(conn, name: str) -> int:
     account_id = cur.lastrowid
     conn.execute("UPDATE accounts SET code=? WHERE id=?", (f"P{account_id:04d}", account_id))
     return account_id
+
+
+def person_part(value: str) -> bool:
+    return bool(re.fullmatch(r"[\u0600-\u06FFa-zA-Z\u200c]{2,40}", value or ""))
+
+
+def walk_in_name(payload: dict) -> str:
+    first = clean_text(payload.get("customer_first"), "نام", 40)
+    last = clean_text(payload.get("customer_last"), "نام خانوادگی", 40)
+    if first or last:
+        if person_part(first) and person_part(last):
+            return f"{first} {last}"
+        raise AppError("نام و نام خانوادگی خریدار را بنویسید")
+    parts = [part for part in re.split(r"\s+", clean_text(payload.get("customer_name"), "نام خریدار", 80)) if part]
+    if len(parts) < 2 or any(not person_part(part) for part in parts):
+        raise AppError("نام و نام خانوادگی خریدار را بنویسید")
+    return " ".join(parts)
+
+
+def walk_in_customer(conn, payload: dict, credit: bool) -> dict:
+    name = walk_in_name(payload)
+    phone = norm_phone(payload.get("customer_phone") or "")
+    if not re.fullmatch(r"09\d{9}", phone):
+        raise AppError("شماره موبایل خریدار را وارد کنید")
+    return ensure_customer(conn, name, phone, credit)
 
 
 def ensure_customer(conn, name: str, phone: str, credit: bool) -> dict:
@@ -975,6 +1000,27 @@ def version_tuple(value: str) -> tuple[int, ...]:
         if len(parts) == 4:
             break
     return tuple(parts) or (0,)
+
+
+def notify_buyer(sale: dict) -> dict:
+    phone = norm_phone(sale.get("customer_phone") or "")
+    if not re.fullmatch(r"09\d{9}", phone):
+        return {"status": "skipped", "detail": ""}
+    name = sale.get("customer_name") or "مشتری"
+    text = f"{name} عزیز\nخرید حضوری شما ثبت شد.\nمبلغ: {int(sale['payable']):,} تومان\nفاکتور: {sale['id']}"
+    try:
+        with connect() as conn:
+            status, detail = deliver_sms(conn, get_settings(conn), phone, text)
+    except Exception:
+        log.exception("buyer sms")
+        return {"status": "failed", "detail": "پیامک خریدار ثبت نشد"}
+    if status == "sent":
+        note = "پیامک ثبت خرید به شماره خریدار رفت"
+    elif status == "internal":
+        note = "پیامک در صندوق پیامک ثبت شد. برای رسیدن به گوشی خریدار، کاوه‌نگار یا ملی‌پیامک را در تنظیمات بگذارید."
+    else:
+        note = f"پیامک نرفت: {detail}"
+    return {"status": status, "detail": note}
 
 
 def notify_manager(settings_snapshot: dict, text: str):
@@ -2443,7 +2489,7 @@ def create_sale():
             raise AppError("صندوق بسته است. از صفحه صندوق آن را باز کنید.")
         items, subtotal = load_cart(conn, payload.get("items"))
         discount = calc_discount(subtotal, dtype, payload.get("discount_value"))
-        customer = ensure_customer(conn, payload.get("customer_name") or "", payload.get("customer_phone") or "", method == "credit")
+        customer = walk_in_customer(conn, payload, method == "credit")
         if method == "gateway" and (subtotal - discount) < 1000:
             raise AppError("حداقل مبلغ درگاه ۱۰۰۰ تومان است")
         sale_id = insert_sale(
@@ -2476,6 +2522,7 @@ def create_sale():
     maybe_send_moadian(sale_id)
     with connect() as conn:
         result = sale_payload(conn, sale_id)
+    result["sms"] = notify_buyer(result["sale"])
     return jsonify(**result)
 
 
@@ -2539,6 +2586,7 @@ def confirm_sale(sale_id: int):
     maybe_send_moadian(sale_id)
     with connect() as conn:
         result = sale_payload(conn, sale_id)
+    result["sms"] = notify_buyer(result["sale"])
     return jsonify(**result)
 
 
@@ -3034,7 +3082,14 @@ def pay_return():
                 if current and current["status"] == "pending":
                     finalize_sale(conn, sale["id"], sale["user_id"])
                     conn.execute("UPDATE sales SET gateway_ref=?, pos_ref=? WHERE id=?", (ref, ref, sale["id"]))
+                    paid_now = True
+                else:
+                    paid_now = False
             maybe_send_moadian(sale["id"])
+            if paid_now:
+                with connect() as conn:
+                    paid = sale_payload(conn, sale["id"])
+                notify_buyer(paid["sale"])
             return pay_page("فاکتور پرداخت شد.", True)
     except AppError as exc:
         return pay_page(str(exc), False), exc.status

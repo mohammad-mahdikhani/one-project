@@ -57,16 +57,40 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(closed.status_code, 400)
         self.open_register(0)
         product = self.add_product()
+        nameless = self.client.post("/api/sales", json={
+            "items": [{"product_id": product["id"], "qty": 1}],
+            "payment_method": "cash",
+            "customer_name": "علی",
+            "customer_phone": "09121111111",
+        })
+        self.assertEqual(nameless.status_code, 400, nameless.get_json())
+        self.assertIn("نام خانوادگی", nameless.get_json()["error"])
+        nophone = self.client.post("/api/sales", json={
+            "items": [{"product_id": product["id"], "qty": 1}],
+            "payment_method": "cash",
+            "customer_first": "علی",
+            "customer_last": "رضایی",
+        })
+        self.assertEqual(nophone.status_code, 400, nophone.get_json())
+        self.assertIn("موبایل", nophone.get_json()["error"])
+        self.assertEqual(self.client.get("/api/products").get_json()["products"][0]["stock"], 5)
         response = self.client.post("/api/sales", json={
             "items": [{"product_id": product["id"], "qty": 2}],
             "discount_type": "percent",
             "discount_value": 10,
             "payment_method": "cash",
-            "customer_name": "علی",
+            "customer_first": "علی",
+            "customer_last": "رضایی",
             "customer_phone": "۰۹۱۲۱۱۱۱۱۱۱",
         })
         self.assertEqual(response.status_code, 200, response.get_json())
         sale = response.get_json()["sale"]
+        self.assertEqual(sale["customer_name"], "علی رضایی")
+        self.assertIn("صندوق پیامک", response.get_json()["sms"]["detail"])
+        inbox = self.client.get("/api/sms").get_json()["messages"]
+        self.assertEqual(inbox[0]["recipient"], "09121111111")
+        self.assertIn("خرید حضوری", inbox[0]["body"])
+        self.assertIn("18,000", inbox[0]["body"])
         self.assertEqual(sale["subtotal"], 20000)
         self.assertEqual(sale["discount"], 2000)
         self.assertEqual(sale["payable"], 18000)
@@ -100,7 +124,7 @@ class DaftarchiTest(unittest.TestCase):
         credit = self.client.post("/api/sales", json={
             "items": [{"product_id": product["id"], "qty": 1}],
             "payment_method": "credit",
-            "customer_name": "مریم",
+            "customer_name": "مریم احمدی",
             "customer_phone": "09123334444",
         })
         self.assertEqual(credit.status_code, 200, credit.get_json())
@@ -231,7 +255,12 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(denied.status_code, 403)
         self.open_register(0)
         product = self.add_product(name="شیر", barcode="333", stock=2, price=8000, cost=0)
-        sold = cashier.post("/api/sales", json={"items": [{"product_id": product["id"], "qty": 1}], "payment_method": "cash"})
+        sold = cashier.post("/api/sales", json={
+            "items": [{"product_id": product["id"], "qty": 1}],
+            "payment_method": "cash",
+            "customer_name": "صندوق دار",
+            "customer_phone": "09124445566",
+        })
         self.assertEqual(sold.status_code, 200, sold.get_json())
 
     def test_manual_journal_must_balance(self):
@@ -280,6 +309,8 @@ class DaftarchiTest(unittest.TestCase):
             pending = self.client.post("/api/sales", json={
                 "items": [{"product_id": product["id"], "qty": 1}],
                 "payment_method": "gateway",
+                "customer_name": "نگار موسوی",
+                "customer_phone": "09125556677",
             })
             self.assertEqual(pending.status_code, 200, pending.get_json())
             sale = pending.get_json()["sale"]
@@ -289,6 +320,8 @@ class DaftarchiTest(unittest.TestCase):
             confirmed = self.client.post(f"/api/sales/{sale['id']}/confirm", json={"mode": "verify"})
             self.assertEqual(confirmed.status_code, 200, confirmed.get_json())
             self.assertEqual(confirmed.get_json()["sale"]["status"], "paid")
+            self.assertEqual(confirmed.get_json()["sms"]["status"], "internal")
+            self.assertIn("09125556677", self.client.get("/api/sms").get_json()["messages"][0]["recipient"])
             self.assertEqual(self.client.get("/api/products").get_json()["products"][0]["stock"], 1)
             pushed = self.client.post("/api/products/woo/push", json={})
             self.assertEqual(pushed.status_code, 200, pushed.get_json())
@@ -552,7 +585,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.0.7")
+        self.assertEqual(appmod.APP_VERSION, "1.0.8")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -577,7 +610,9 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
-        self.assertIn("1.0.7", run)
+        self.assertIn("1.0.8", run)
+        self.assertIn("buyer-first", script)
+        self.assertIn("خرید حضوری بدون نام", script)
         self.assertIn("ارسال به سامانه مودیان", script)
         self.assertIn("moadian_sandbox", script)
         stop = Path("/workspace/windows/installer/stop-daftarchi.ps1").read_text(encoding="utf-8")
@@ -591,7 +626,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.0.7")
+        self.assertEqual(boot["version"], "1.0.8")
         pay = Path("/workspace/site-updates/daftarchi/pay.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-pay", pay)
         self.assertIn("gateway.zibal.ir/v1/request", pay)
@@ -649,6 +684,8 @@ class DaftarchiTest(unittest.TestCase):
         skipped = self.client.post("/api/sales", json={
             "items": [{"product_id": plain["id"], "qty": 1}],
             "payment_method": "cash",
+            "customer_name": "علی رضایی",
+            "customer_phone": "09120001122",
         })
         self.assertEqual(skipped.status_code, 200, skipped.get_json())
         self.assertEqual(skipped.get_json()["sale"]["status"], "paid")
@@ -715,6 +752,8 @@ class DaftarchiTest(unittest.TestCase):
             sent = self.client.post("/api/sales", json={
                 "items": [{"product_id": coded["id"], "qty": 1}],
                 "payment_method": "cash",
+                "customer_name": "علی رضایی",
+                "customer_phone": "09120001122",
             })
             self.assertEqual(sent.status_code, 200, sent.get_json())
             sale = sent.get_json()["sale"]
