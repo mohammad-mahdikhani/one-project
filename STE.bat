@@ -1,8 +1,14 @@
 @echo off
 cd /d "%~dp0"
-if not exist runtime\pythonw.exe (
-  echo runtime\pythonw.exe not found.
+if not exist runtime\python.exe (
+  echo runtime\python.exe not found.
   pause
   exit /b 1
 )
-start "" "%~dp0runtime\pythonw.exe" "%~dp0ste_boot.py"
+runtime\python.exe launch.py
+if errorlevel 1 (
+  echo.
+  echo STE failed. Open ste-error.log
+  if exist ste-error.log type ste-error.log
+  pause
+)
