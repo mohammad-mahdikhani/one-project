@@ -72,7 +72,15 @@ def token_score(sheet_name: str, product_name: str) -> tuple[int, str]:
     recall = len(overlap) / len(sheet_set)
     precision = len(overlap) / len(product_set)
     dice = 2 * len(overlap) / (len(sheet_set) + len(product_set))
-    base = int(round(100 * (0.45 * recall + 0.25 * precision + 0.30 * dice)))
+    base = int(round(100 * (0.40 * recall + 0.30 * precision + 0.30 * dice)))
+
+    distinctive = {"اکونومی", "الیت", "لوتوس", "پرایم", "لیلیوم", "تولیپ", "لجند", "ساکورا", "ویتا"}
+    sheet_mark = set(sheet_words) & distinctive
+    product_mark = set(product_words) & distinctive
+    if sheet_mark and product_mark and sheet_mark.isdisjoint(product_mark):
+        return 0, "مدل کالا فرق دارد"
+    if sheet_mark != product_mark and (sheet_mark or product_mark):
+        base = min(base, 70)
 
     sheet_models = model_tokens(sheet_name)
     product_models = model_tokens(product_name)
@@ -87,14 +95,19 @@ def token_score(sheet_name: str, product_name: str) -> tuple[int, str]:
         strong = {"elite", "prime", "lotus", "legend", "vita", "orchid"}
         if (letters & strong) and (other_letters & strong) and not (letters & other_letters & strong):
             return 0, "مدل کالا فرق دارد"
-        base = min(base, 54)
-    elif shared_models:
-        base += min(18, 6 * len(shared_models))
+        return min(base, 58), "مدل کالا یکی نیست"
+    if shared_models:
+        base += min(12, 4 * len(shared_models))
 
-    if sheet_norm in product_norm or product_norm in sheet_norm:
-        base = max(base, 86)
+    shorter, longer = sorted((len(sheet_norm), len(product_norm)))
+    if longer and shorter / longer < 0.5:
+        base -= 12
+    if len(overlap) < 2 and not shared_models:
+        return min(base, 60), "شباهت اسم کم است"
+    if recall < 0.55:
+        base = min(base, 72)
 
-    return min(base, 96), "تطابق از روی نام"
+    return min(max(base, 0), 96), "تطابق از روی نام"
 
 
 def match_row(sheet: SheetRow, products: list[Product]) -> MatchResult:
@@ -110,9 +123,9 @@ def match_row(sheet: SheetRow, products: list[Product]) -> MatchResult:
         if best is None or score > best[0]:
             best = (score, product, reason)
 
-    if best and best[0] >= 78:
+    if best and best[0] >= 88:
         return MatchResult(sheet, best[1], best[0], best[2], "update")
-    if best and best[0] >= 62:
+    if best and best[0] >= 74:
         return MatchResult(sheet, None, best[0], "نام نزدیک است؛ تأیید کنید", "suggest", suggested=best[1])
     if sheet.price is None:
         return MatchResult(sheet, None, 0, "قیمت مصرف‌کننده ندارد", "skip")
@@ -125,7 +138,7 @@ def match_rows(rows: list[SheetRow], products: list[Product]) -> list[MatchResul
     for sheet in rows:
         available = [item for item in products if id(item) not in used]
         result = match_row(sheet, available)
-        chosen = result.product or (result.suggested if result.score >= 78 else None)
+        chosen = result.product or (result.suggested if result.score >= 88 else None)
         if chosen:
             used.add(id(chosen))
         results.append(result)

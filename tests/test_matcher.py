@@ -30,7 +30,14 @@ def test_match_economy_401_by_name():
     sheet = SheetRow(row=2, sku="01105559", name="دستگاه تصفیه آب آکواجوی مدل 401 (E) اکونومی", price=325000000)
     result = match_row(sheet, site)
     assert result.action == "update"
-    assert result.score >= 78
+    assert result.score >= 88
+
+
+def test_generic_401_is_not_economy():
+    site = [Product(id=1, sku="", name="تصفیه آب آکواجوی مدل 401", price=1)]
+    sheet = SheetRow(row=2, sku="01105559", name="دستگاه تصفیه آب آکواجوی مدل 401 (E) اکونومی", price=325000000)
+    result = match_row(sheet, site)
+    assert result.action != "update"
 
 
 def test_do_not_match_elite_with_lotus():

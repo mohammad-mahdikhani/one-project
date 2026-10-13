@@ -26,14 +26,14 @@ VIAddVersionKey /LANG=1033 "LegalCopyright" "STE"
 Section "STE"
   SetOutPath "$INSTDIR"
   File /r "payload\*.*"
-  CreateShortCut "$DESKTOP\STE.lnk" "$INSTDIR\STE.bat" "" "$INSTDIR\runtime\python.exe" 0
-  CreateShortCut "$SMPROGRAMS\STE.lnk" "$INSTDIR\STE.bat" "" "$INSTDIR\runtime\python.exe" 0
+  CreateShortCut "$DESKTOP\استی.lnk" "$INSTDIR\runtime\pythonw.exe" "ste_boot.py" "$INSTDIR\runtime\pythonw.exe" 0
+  CreateShortCut "$SMPROGRAMS\استی.lnk" "$INSTDIR\runtime\pythonw.exe" "ste_boot.py" "$INSTDIR\runtime\pythonw.exe" 0
   WriteUninstaller "$INSTDIR\Uninstall-STE.exe"
   WriteRegStr HKCU "Software\STE" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\STE" "DisplayName" "STE"
   WriteRegStr HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\STE" "UninstallString" "$INSTDIR\Uninstall-STE.exe"
   WriteRegDWORD HKCU "Software\Microsoft\Windows\CurrentVersion\Uninstall\STE" "NoModify" 1
-  Exec '"$INSTDIR\STE.bat"'
+  Exec '"$INSTDIR\runtime\pythonw.exe" "$INSTDIR\ste_boot.py"'
 SectionEnd
 
 Section "Uninstall"

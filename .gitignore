@@ -4,3 +4,4 @@ data/
 *.pyc
 .venv/
 windows/installer/payload/
+app-profile/
