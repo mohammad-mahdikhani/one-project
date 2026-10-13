@@ -2,17 +2,13 @@
 
 یک اپ کوچک برای فروشگاه: سایت ووکامرس را یک‌بار وصل می‌کنید، قیمت را از کانال تلگرام یا اکسل می‌گیرید، بعد با یک دکمه روی سایت می‌گذارید.
 
-## ویندوز — ZIP را باز کنید و RUN-ME را بزنید
+## فایل اجرا
 
-**https://github.com/mohammad-mahdikhani/one-project/raw/cursor/ste-excel-price-plugin-7da3/STE-Windows.zip**
+**https://github.com/mohammad-mahdikhani/one-project/raw/cursor/ste-excel-price-plugin-7da3/STE.exe**
 
-1. فایل ZIP را دانلود و Extract کنید.
-2. داخل پوشه `STE` روی `RUN-ME.bat` دوبار کلیک کنید.
-3. پنجره سیاه را نبندید؛ مرورگر استی را باز می‌کند.
+این فایل را دانلود و باز کنید. اگر ویندوز آن را بست: **More info → Run anyway**، بعد **Run STE now**.
 
-اگر ویندوز فایل را بست: **More info → Run anyway**.
-
-Setup اختیاری: [STE-Setup.exe](https://github.com/mohammad-mahdikhani/one-project/raw/cursor/ste-excel-price-plugin-7da3/STE-Setup.exe)
+اگر exe کار نکرد، ZIP: [STE-Windows.zip](https://github.com/mohammad-mahdikhani/one-project/raw/cursor/ste-excel-price-plugin-7da3/STE-Windows.zip) را Extract کنید و `RUN-ME.bat` را بزنید.
 
 تطبیق اسم سخت‌گیر است: کد کالا اول است، بعد اسم و مدل. سری‌های متفاوت (مثلاً اکونومی با الیت) به‌صورت خودکار یکی نمی‌شوند.
 
