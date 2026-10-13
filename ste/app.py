@@ -9,6 +9,7 @@ from flask import Flask, jsonify, render_template, request, send_file, send_from
 from .catalog import apply_match, connect, get_settings, list_products, log_import, save_settings, seed_if_empty
 from .importer import read_upload, write_template
 from .matcher import match_rows
+from .websearch import search_shop
 from .normalize import format_money
 from .site_seed import SITE_PRODUCTS
 from .telegram import TelegramError, crawl_channel
@@ -178,7 +179,8 @@ def preview_payload(rows, site_source: str | None) -> tuple[dict, list, str]:
         settings = get_settings(conn)
     chosen = resolve_source(settings, site_source)
     products = load_source(settings, chosen)
-    results = match_rows(rows, products)
+    shop = settings.get("wp_url") if chosen == "woo" else ""
+    results = match_rows(rows, products, shop_url=shop or None, search=search_shop if shop else None)
     counts = {
         "rows": len(results),
         "update": sum(1 for item in results if item.action == "update"),
@@ -211,7 +213,7 @@ def api_telegram_crawl():
     channel = str(payload.get("channel") or "").strip()
     site_source = payload.get("source") or "local"
     try:
-        pages = int(payload.get("pages") or 3)
+        pages = int(payload.get("pages") or 5)
         crawled = crawl_channel(channel, pages=pages)
         counts, results, chosen = preview_payload(crawled["rows"], site_source)
     except (TelegramError, ValueError) as exc:

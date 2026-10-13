@@ -41,7 +41,7 @@ def show_error(message: str) -> None:
     try:
         import ctypes
 
-        ctypes.windll.user32.MessageBoxW(0, message[:1500], "STE", 0x10)
+        ctypes.windll.user32.MessageBoxW(0, message[:1500], "قیمت ست کن", 0x10)
     except Exception:
         pass
 

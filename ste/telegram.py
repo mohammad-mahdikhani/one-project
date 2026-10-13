@@ -110,7 +110,7 @@ def fetch_preview(url: str) -> str:
     return result.body.decode("utf-8", errors="replace")
 
 
-def crawl_channel(channel: str, pages: int = 3, fetch=fetch_preview) -> dict:
+def crawl_channel(channel: str, pages: int = 5, fetch=fetch_preview) -> dict:
     slug = channel_slug(channel)
     if slug.lower() == "demo":
         fixture = Path(__file__).resolve().parent.parent / "tests/fixtures/telegram_channel.html"
@@ -120,7 +120,7 @@ def crawl_channel(channel: str, pages: int = 3, fetch=fetch_preview) -> dict:
     url = preview_url(slug)
     messages: list[ChannelMessage] = []
     seen: set[str] = set()
-    for _ in range(max(1, min(pages, 6))):
+    for _ in range(max(1, min(pages, 10))):
         html = fetch(url)
         batch = parse_channel_html(html, slug)
         fresh = [item for item in batch if item.post not in seen]

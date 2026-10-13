@@ -104,7 +104,7 @@ def model_tokens(text: str) -> set[str]:
             found.add(token)
     for match in re.finditer(r"\b(\d{2,4})\b", value):
         number = match.group(1)
-        if number not in {"10", "12", "20", "24", "220", "300", "1000", "2000", "1600"}:
+        if number not in {"10", "12", "20", "24", "220"}:
             found.add(number)
     for special in ("elite", "prime", "lotus", "legend", "tulip", "lilium", "vita", "orchid", "sakura", "qc", "ln", "hs", "lp", "bb", "slim", "inline", "hepa", "voc"):
         if re.search(rf"\b{special}\b", value):

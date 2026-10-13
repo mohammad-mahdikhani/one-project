@@ -1,7 +1,7 @@
 {
-  "name": "استی",
-  "short_name": "استی",
-  "description": "سینک قیمت فروشگاه",
+  "name": "قیمت ست کن",
+  "short_name": "قیمت ست کن",
+  "description": "تطبیق هوشمند قیمت با سایت",
   "dir": "rtl",
   "lang": "fa",
   "start_url": "/",

@@ -218,7 +218,7 @@ def read_message_text(text: str, source: dict | None = None) -> list[SheetRow]:
             items.append(item)
             pending_name = ""
             continue
-        if line and pending_name and extract_price_span(line)[0] and not extract_sku(line):
+        if line and pending_name and extract_price_span(line)[0]:
             item = _line_product(index, f"{pending_name} {line}")
             if item:
                 if source:
@@ -230,7 +230,13 @@ def read_message_text(text: str, source: dict | None = None) -> list[SheetRow]:
                 pending_name = ""
                 continue
         if line and not extract_price_span(line)[0]:
-            pending_name = line
+            extra_code = extract_sku(line)
+            if extra_code and pending_name:
+                pending_name = f"{pending_name} {extra_code}"
+            elif pending_name and len(line) < 80:
+                pending_name = f"{pending_name} {line}"
+            else:
+                pending_name = line
     return items
 
 

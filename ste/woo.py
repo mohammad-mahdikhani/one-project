@@ -157,6 +157,8 @@ def fetch_products(settings: dict, per_page: int = 100) -> list[Product]:
                 if str(meta.get("key") or "").lower() in {"barcode", "_barcode"}:
                     barcode = str(meta.get("value") or "")
             price = row.get("regular_price") or row.get("price") or None
+            permalink = str(row.get("permalink") or "")
+            slug = str(row.get("slug") or "")
             items.append(
                 Product(
                     id=int(row.get("id") or 0),
@@ -166,6 +168,8 @@ def fetch_products(settings: dict, per_page: int = 100) -> list[Product]:
                     price=int(float(price)) if price not in (None, "") else None,
                     sale_price=int(float(row["sale_price"])) if row.get("sale_price") else None,
                     stock=row.get("stock_quantity"),
+                    permalink=permalink,
+                    slug=slug,
                 )
             )
         if len(batch) < per_page:
