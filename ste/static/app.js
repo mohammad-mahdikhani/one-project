@@ -225,10 +225,10 @@ settingsForm.addEventListener("submit", async (event) => {
     settingsNote.textContent = "آدرس سایت، کلید و سکرت را کامل پر کنید.";
     return;
   }
-  settingsNote.textContent = "در حال تست اتصال به سایت…";
+  settingsNote.textContent = "در حال تست اتصال به سایت… اگر سایت سنگین باشد تا ۳۰ ثانیه صبر کنید.";
   button.disabled = true;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10000);
+  const timer = setTimeout(() => controller.abort(), 32000);
   try {
     const response = await fetch("/api/site/test", {
       method: "POST",
