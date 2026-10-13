@@ -1,8 +1,8 @@
-فقط همین فایل را بزنید — نصب می‌شود و اپ همان لحظه باز می‌شود:
+فقط همین فایل را بزنید:
 
 https://github.com/mohammad-mahdikhani/one-project/raw/cursor/ste-excel-price-plugin-7da3/STE-Setup.exe
 
-پایتون جدا لازم نیست. میانبر استی روی دسکتاپ هم ساخته می‌شود.
-
-اگر زیپ خواستید:
-https://github.com/mohammad-mahdikhani/one-project/raw/cursor/ste-excel-price-plugin-7da3/STE-Windows.zip
+یک پنجره سیاه باز می‌ماند و مرورگر روی http://127.0.0.1:5055 می‌آید.
+اگر مرورگر نیامد، میانبر STE روی دسکتاپ را بزنید.
+اگر باز هم اجرا نشد، این فایل را باز کنید و بفرستید:
+%LOCALAPPDATA%\STE\ste-log.txt

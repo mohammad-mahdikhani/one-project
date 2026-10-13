@@ -1,4 +1,3 @@
 @echo off
-chcp 65001 >nul
 cd /d "%~dp0"
-call "%~dp0Start-STE.bat"
+call "%~dp0STE.bat"
