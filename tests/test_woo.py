@@ -27,6 +27,41 @@ def test_connection_401(monkeypatch):
         raise AssertionError("expected WooError")
 
 
+def test_fetch_uses_total_pages_when_shop_caps_per_page(monkeypatch):
+    calls = []
+
+    def fake_request(url, method="GET", headers=None, payload=None, timeout=25, insecure=False):
+        calls.append(url)
+        if "&page=1&" in url or url.endswith("page=1"):
+            return (200, [{"id": 1, "name": "فیلتر یک", "sku": "01306575", "regular_price": "1"}], {"x-wp-total": "2", "x-wp-totalpages": "2"})
+        if "&page=2&" in url or url.endswith("page=2"):
+            return (200, [{"id": 2, "name": "فیلتر دو", "sku": "01306576", "regular_price": "2"}], {"x-wp-total": "2", "x-wp-totalpages": "2"})
+        return (200, [], {"x-wp-total": "2", "x-wp-totalpages": "2"})
+
+    monkeypatch.setattr("ste.woo.request_json", fake_request)
+    items = woo_mod.fetch_products({"wp_url": "https://shop.com", "woo_key": "ck_1", "woo_secret": "cs_1"}, per_page=100)
+    assert [item.sku for item in items] == ["01306575", "01306576"]
+    assert any("page=2" in url for url in calls)
+
+
+def test_find_products_tries_sku_without_leading_zeros(monkeypatch):
+    seen = []
+
+    def fake_request(url, method="GET", headers=None, payload=None, timeout=25, insecure=False):
+        seen.append(url)
+        if "sku=01306575" in url or "sku=1306575" in url:
+            return (200, [{"id": 9, "name": "فیلتر الیافی", "sku": "01306575", "regular_price": "18"}], {})
+        return (200, [], {})
+
+    monkeypatch.setattr("ste.woo.request_json", fake_request)
+    items = woo_mod.find_products(
+        {"wp_url": "https://shop.com", "woo_key": "ck_1", "woo_secret": "cs_1"},
+        sku="01306575",
+    )
+    assert items and items[0].id == 9
+    assert seen
+
+
 def test_connection_timeout(monkeypatch):
     from ste.httputil import HttpError
 

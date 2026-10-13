@@ -38,6 +38,17 @@ ALIASES = {
     "مرحله": "stage",
     "مرحله‌ای": "stage",
     "مرحله ای": "stage",
+    "اکواجوی": "aquajoy",
+    "aquajoy": "aquajoy",
+    "aqua": "aquajoy",
+    "یک": "1",
+    "پنج": "5",
+    "ده": "10",
+    "bb": "bb",
+    "بیبی": "bb",
+    "inline": "inline",
+    "اینلاین": "inline",
+    "uf": "uf",
 }
 
 DISTINCTIVE = {
@@ -51,6 +62,8 @@ DISTINCTIVE = {
     "sakura",
     "vita",
     "orchid",
+    "bb",
+    "inline",
 }
 
 PRODUCT_KINDS = {
@@ -121,6 +134,26 @@ def _code_key(value: str | None) -> str:
     return (normalize_code(value) or "").lower()
 
 
+def sku_keys(value: str | None) -> set[str]:
+    raw = _code_key(value)
+    if not raw:
+        return set()
+    digits = re.sub(r"\D+", "", raw)
+    keys = {raw}
+    if digits:
+        keys.add(digits)
+        stripped = digits.lstrip("0") or "0"
+        keys.add(stripped)
+        if len(stripped) >= 5:
+            keys.add(stripped.zfill(8))
+            keys.add(stripped.zfill(7))
+        if len(digits) >= 7:
+            keys.add(digits[-7:])
+        if len(digits) >= 8:
+            keys.add(digits[-8:])
+    return {item for item in keys if len(item) >= 5}
+
+
 def extract_codes(*parts: str | None) -> set[str]:
     found: set[str] = set()
     for part in parts:
@@ -138,11 +171,21 @@ def alias_set(text: str) -> set[str]:
     return out
 
 
+def _expand_codes(codes: set[str]) -> set[str]:
+    expanded: set[str] = set()
+    for item in codes:
+        expanded |= sku_keys(item)
+        expanded.add(item)
+    return expanded
+
+
 def _codes_overlap(left: set[str], right: set[str]) -> bool:
-    if left & right:
+    left_keys = _expand_codes(left)
+    right_keys = _expand_codes(right)
+    if left_keys & right_keys:
         return True
-    for one in left:
-        for other in right:
+    for one in left_keys:
+        for other in right_keys:
             if len(one) >= 6 and len(other) >= 6 and (one.endswith(other) or other.endswith(one)):
                 return True
     return False
@@ -195,6 +238,16 @@ def token_score(sheet_name: str, product_name: str) -> tuple[int, str]:
     sheet_digits = set(DIGIT_RE.findall(sheet_norm))
     product_digits = set(DIGIT_RE.findall(product_norm))
     shared_digits = {d for d in sheet_digits & product_digits if len(d) >= 2 and d not in {"10", "12", "20"}}
+    sheet_gpd = {item for item in sheet_models if item.endswith("gpd")}
+    product_gpd = {item for item in product_models if item.endswith("gpd")}
+    if sheet_gpd and product_gpd and sheet_gpd.isdisjoint(product_gpd):
+        return 0, "مدل کالا فرق دارد"
+    sheet_nums = {word for word in sheet_words if word.isdigit()}
+    product_nums = {word for word in product_words if word.isdigit()}
+    if sheet_nums and product_nums:
+        shared_nums = {item for item in sheet_nums & product_nums if item not in {"10", "12", "20", "24"}}
+        if not shared_nums and (sheet_nums - product_nums) - {"10", "12", "20", "24"}:
+            return 0, "عدد کالا فرق دارد"
 
     if sheet_models and product_models and not shared_models:
         numeric = {m for m in sheet_models if m.isdigit()}
@@ -247,7 +300,9 @@ def match_row(sheet: SheetRow, products: list[Product]) -> MatchResult:
         if sheet_codes and product_codes and _codes_overlap(sheet_codes, product_codes):
             return MatchResult(sheet, product, 100, "کد یا عدد کالا یکی است", "update")
         if sheet.sku and (
-            _code_key(product.sku) == _code_key(sheet.sku) or _code_key(product.barcode) == _code_key(sheet.sku)
+            _code_key(product.sku) == _code_key(sheet.sku)
+            or _code_key(product.barcode) == _code_key(sheet.sku)
+            or (sku_keys(sheet.sku) & (sku_keys(product.sku) | sku_keys(product.barcode)))
         ):
             return MatchResult(sheet, product, 100, "کد کالا یکی است", "update")
 
@@ -281,7 +336,7 @@ def _product_from_hit(hit_url: str, hit_title: str, products: list[Product]) -> 
     return None
 
 
-def match_rows(rows: list[SheetRow], products: list[Product], shop_url: str | None = None, search=None) -> list[MatchResult]:
+def match_rows(rows: list[SheetRow], products: list[Product], shop_url: str | None = None, search=None, lookup=None) -> list[MatchResult]:
     used: set[int] = set()
     results: list[MatchResult] = []
     pending: list[int] = []
@@ -294,6 +349,31 @@ def match_rows(rows: list[SheetRow], products: list[Product], shop_url: str | No
         results.append(result)
         if result.action in {"create", "suggest"}:
             pending.append(len(results) - 1)
+
+    if lookup and pending:
+        still: list[int] = []
+        for index in pending[:40]:
+            result = results[index]
+            try:
+                extra = lookup(result.sheet) or []
+            except Exception:
+                still.append(index)
+                continue
+            if not extra:
+                still.append(index)
+                continue
+            available = list(extra) + [item for item in products if id(item) not in used]
+            rematch = match_row(result.sheet, available)
+            if rematch.action == "update" or (rematch.action == "suggest" and rematch.score > result.score):
+                results[index] = rematch
+                chosen = rematch.product or rematch.suggested
+                if rematch.action == "update" and chosen:
+                    used.add(id(chosen))
+                    if chosen not in products:
+                        products.append(chosen)
+                continue
+            still.append(index)
+        pending = still + pending[40:]
 
     if shop_url and search and pending:
         for index in pending[:20]:

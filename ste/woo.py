@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import base64
+from urllib.parse import quote
 
 from .httputil import HttpError, normalize_shop_url, request_json
-from .matcher import Product
+from .matcher import Product, sku_keys
+from .normalize import name_tokens, normalize_name
 
 
 class WooError(RuntimeError):
@@ -143,39 +145,96 @@ def test_connection(settings: dict) -> dict:
     }
 
 
+def _header_int(headers: dict, key: str) -> int:
+    try:
+        return int(headers.get(key) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def product_from_woo(row: dict) -> Product:
+    sku = str(row.get("sku") or "")
+    barcode = ""
+    for meta in row.get("meta_data") or []:
+        if str(meta.get("key") or "").lower() in {"barcode", "_barcode"}:
+            barcode = str(meta.get("value") or "")
+    price = row.get("regular_price") or row.get("price") or None
+    return Product(
+        id=int(row.get("id") or 0),
+        name=str(row.get("name") or ""),
+        sku=sku,
+        barcode=barcode,
+        price=int(float(price)) if price not in (None, "") else None,
+        sale_price=int(float(row["sale_price"])) if row.get("sale_price") else None,
+        stock=row.get("stock_quantity"),
+        permalink=str(row.get("permalink") or ""),
+        slug=str(row.get("slug") or ""),
+    )
+
+
 def fetch_products(settings: dict, per_page: int = 100) -> list[Product]:
     page = 1
     items: list[Product] = []
-    while True:
-        batch, _headers = _request(settings, "GET", f"products?per_page={per_page}&page={page}")
+    seen: set[int] = set()
+    while page <= 80:
+        try:
+            batch, headers = _request(settings, "GET", f"products?per_page={per_page}&page={page}&status=publish")
+        except WooError:
+            if items:
+                break
+            raise
         if not isinstance(batch, list) or not batch:
             break
         for row in batch:
-            sku = str(row.get("sku") or "")
-            barcode = ""
-            for meta in row.get("meta_data") or []:
-                if str(meta.get("key") or "").lower() in {"barcode", "_barcode"}:
-                    barcode = str(meta.get("value") or "")
-            price = row.get("regular_price") or row.get("price") or None
-            permalink = str(row.get("permalink") or "")
-            slug = str(row.get("slug") or "")
-            items.append(
-                Product(
-                    id=int(row.get("id") or 0),
-                    name=str(row.get("name") or ""),
-                    sku=sku,
-                    barcode=barcode,
-                    price=int(float(price)) if price not in (None, "") else None,
-                    sale_price=int(float(row["sale_price"])) if row.get("sale_price") else None,
-                    stock=row.get("stock_quantity"),
-                    permalink=permalink,
-                    slug=slug,
-                )
-            )
-        if len(batch) < per_page:
+            product = product_from_woo(row)
+            if product.id and product.id not in seen:
+                seen.add(product.id)
+                items.append(product)
+        total = _header_int(headers, "x-wp-total")
+        total_pages = _header_int(headers, "x-wp-totalpages")
+        if total and len(items) >= total:
             break
+        if total_pages and page >= total_pages:
+            break
+        if not total_pages and not total and len(batch) < per_page:
+            if len(batch) not in {10, 20, 50}:
+                break
         page += 1
     return items
+
+
+def find_products(settings: dict, sku: str | None = None, search: str | None = None, limit: int = 10) -> list[Product]:
+    seen: dict[int, Product] = {}
+    paths: list[str] = []
+    if sku:
+        keys: list[str] = []
+        for key in [str(sku).strip(), *sorted(sku_keys(sku), key=len, reverse=True)]:
+            if key and key not in keys:
+                keys.append(key)
+        for key in keys[:4]:
+            paths.append(f"products?sku={quote(key, safe='')}&per_page=5")
+    if search:
+        query = " ".join(name_tokens(search)[:6]) or normalize_name(search)[:48]
+        if query:
+            paths.append(f"products?search={quote(query, safe='')}&per_page={limit}")
+    for path in paths:
+        try:
+            batch, _headers = _request(settings, "GET", path, timeout=25)
+        except WooError:
+            continue
+        if not isinstance(batch, list):
+            continue
+        for row in batch:
+            product = product_from_woo(row)
+            if product.id:
+                seen[product.id] = product
+        if sku and seen:
+            break
+    return list(seen.values())
+
+
+def lookup_sheet(settings: dict, sheet) -> list[Product]:
+    return find_products(settings, sku=getattr(sheet, "sku", None), search=getattr(sheet, "name", None))
 
 
 def push_price(settings: dict, product_id: int, price: int, sku: str | None = None) -> dict:

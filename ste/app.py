@@ -14,7 +14,7 @@ from .normalize import format_money
 from .site_seed import SITE_PRODUCTS
 from .telegram import TelegramError, crawl_channel
 from .httputil import normalize_shop_url
-from .woo import WooError, create_product, fetch_products, push_price, site_connected, site_ready, test_connection
+from .woo import WooError, create_product, fetch_products, lookup_sheet, push_price, site_connected, site_ready, test_connection
 
 ROOT = Path(__file__).resolve().parent
 APP = Flask(__name__, template_folder=str(ROOT / "templates"), static_folder=str(ROOT / "static"))
@@ -180,7 +180,8 @@ def preview_payload(rows, site_source: str | None) -> tuple[dict, list, str]:
     chosen = resolve_source(settings, site_source)
     products = load_source(settings, chosen)
     shop = settings.get("wp_url") if chosen == "woo" else ""
-    results = match_rows(rows, products, shop_url=shop or None, search=search_shop if shop else None)
+    lookup = (lambda sheet, current=settings: lookup_sheet(current, sheet)) if chosen == "woo" else None
+    results = match_rows(rows, products, shop_url=shop or None, search=search_shop if shop else None, lookup=lookup)
     counts = {
         "rows": len(results),
         "update": sum(1 for item in results if item.action == "update"),

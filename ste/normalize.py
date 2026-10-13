@@ -67,6 +67,13 @@ UNIT_TOKENS = {"gpd", "psi", "vac", "mm", "cm", "inch"}
 SPACE_RE = re.compile(r"[\s\u200c\u200f\u202a-\u202e]+")
 PUNCT_RE = re.compile(r"[()\[\]{},.;:|/\\'\"«»<>`~!@#$%^&+=?]+")
 CODE_RE = re.compile(r"^\d{5,12}$")
+LETTER_DIGIT_RE = re.compile(r"([a-z\u0600-\u06ff])(\d)", re.I)
+DIGIT_LETTER_RE = re.compile(r"(\d)([a-z\u0600-\u06ff])", re.I)
+PERSIAN_LATIN_RE = re.compile(r"([\u0600-\u06ff])([a-z])", re.I)
+LATIN_PERSIAN_RE = re.compile(r"([a-z])([\u0600-\u06ff])", re.I)
+BB_RE = re.compile(r"b\s*[\.\-]\s*b", re.I)
+INLINE_RE = re.compile(r"in\s*[\-\s]*line", re.I)
+KIND_PREFIXES = ("فیلتر", "ممبران", "هوزینگ", "دستگاه", "پمپ")
 
 
 def clean_space(text: str) -> str:
@@ -83,15 +90,26 @@ def fold_persian(text: str) -> str:
 
 def normalize_name(text: str) -> str:
     value = fold_persian(text).lower()
+    value = value.replace("اینج", "اینچ")
+    value = BB_RE.sub("bb", value)
+    value = INLINE_RE.sub("inline", value)
     value = PUNCT_RE.sub(" ", value)
     value = value.replace("آ", "ا")
+    value = LETTER_DIGIT_RE.sub(r"\1 \2", value)
+    value = DIGIT_LETTER_RE.sub(r"\1 \2", value)
+    value = PERSIAN_LATIN_RE.sub(r"\1 \2", value)
+    value = LATIN_PERSIAN_RE.sub(r"\1 \2", value)
+    for kind in KIND_PREFIXES:
+        value = re.sub(rf"({re.escape(kind)})(\S)", r"\1 \2", value)
     return clean_space(value)
 
 
 def name_tokens(text: str) -> list[str]:
     tokens = []
     for raw in normalize_name(text).replace("-", " ").split():
-        if raw in STOPWORDS or len(raw) == 1:
+        if raw in STOPWORDS:
+            continue
+        if len(raw) == 1 and not raw.isdigit():
             continue
         tokens.append(raw)
     return tokens

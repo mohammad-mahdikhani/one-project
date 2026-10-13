@@ -21,11 +21,11 @@ SetOverwrite on
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_LANGUAGE "English"
 
-VIProductVersion "1.0.7.0"
+VIProductVersion "1.0.8.0"
 VIAddVersionKey /LANG=1033 "ProductName" "Gheymat Set Kon"
 VIAddVersionKey /LANG=1033 "FileDescription" "Gheymat Set Kon"
-VIAddVersionKey /LANG=1033 "FileVersion" "1.0.7"
-VIAddVersionKey /LANG=1033 "ProductVersion" "1.0.7"
+VIAddVersionKey /LANG=1033 "FileVersion" "1.0.8"
+VIAddVersionKey /LANG=1033 "ProductVersion" "1.0.8"
 VIAddVersionKey /LANG=1033 "LegalCopyright" "STE"
 
 Section "STE"

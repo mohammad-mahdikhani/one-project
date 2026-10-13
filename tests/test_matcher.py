@@ -7,6 +7,10 @@ def test_persian_letters_and_money():
     assert normalize_name("شرح كالاي پالستيكي") == "شرح کالای پلاستیکی"
     assert parse_money("132,000,000") == 132000000
     assert format_money(132000000) == "132٬000٬000 تومان"
+    glued = normalize_name("فیلترالیافی1میکرون10اینچB.B")
+    assert "فیلتر الیافی 1" in glued
+    assert "bb" in glued
+    assert "inline" in normalize_name("فیلتر 10 اینچ IN LINE")
 
 
 def test_match_by_supplier_code():
@@ -120,3 +124,43 @@ def test_qe_does_not_match_qc():
     sheet = SheetRow(row=1, sku="", name="فیلتر کربن نهایی آکواجوی QE", price=12900000)
     result = match_row(sheet, site)
     assert result.action != "update"
+
+
+def test_glued_bb_filter_matches_site_name():
+    site = [Product(id=20, sku="", name="فیلتر الیافی 1 میکرون 10 اینچ BB", price=18000000)]
+    sheet = SheetRow(row=1, sku="", name="فیلترالیافی1میکرون10اینچB.B", price=18900000)
+    result = match_row(sheet, site)
+    assert result.action == "update"
+    assert result.product.id == 20
+
+
+def test_leading_zero_sku_variants_match():
+    site = [Product(id=21, sku="01310110", name="ممبران RO آکواجوی 50GPD", price=50000000)]
+    sheet = SheetRow(row=1, sku="00131010", name="ممبران RO طول 10 اینچ Aquajoy 50GPD", price=55300000)
+    result = match_row(sheet, site)
+    assert result.action == "update"
+    assert result.product.id == 21
+
+
+def test_one_micron_does_not_match_five_micron():
+    site = [Product(id=22, sku="", name="فیلتر الیافی 5 میکرون 10 اینچ BB", price=17000000)]
+    sheet = SheetRow(row=1, sku="", name="فیلتر الیافی1 میکرون10اینچB.B", price=18900000)
+    result = match_row(sheet, site)
+    assert result.action != "update"
+
+
+def test_lookup_finds_missing_catalog_sku():
+    site = [Product(id=1, sku="01103008", name="تصفیه آب سه مرحله‌ای", price=1)]
+    rows = [SheetRow(row=1, sku="01306577", name="فیلتر دوش حمام مشکی", price=12200000)]
+    found = [Product(id=33, sku="01306577", name="فیلتر دوش حمام مشکی", price=11000000)]
+    results = match_rows(rows, site, lookup=lambda sheet: found)
+    assert results[0].action == "update"
+    assert results[0].product.id == 33
+
+
+def test_inline_and_aquajoy_aliases():
+    site = [Product(id=24, sku="", name="فیلتر الیافی اینلاین 10 اینچ شفاف", price=14000000)]
+    sheet = SheetRow(row=1, sku="", name="فیلتر 10 اینچ IN LINE (شفاف)", price=14100000)
+    result = match_row(sheet, site)
+    assert result.action == "update"
+    assert result.score >= 78
