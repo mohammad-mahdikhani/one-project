@@ -1,7 +1,8 @@
-دانلود فایل ویندوز استی:
+فقط همین فایل را بزنید — نصب می‌شود و اپ همان لحظه باز می‌شود:
 
+https://github.com/mohammad-mahdikhani/one-project/raw/cursor/ste-excel-price-plugin-7da3/STE-Setup.exe
+
+پایتون جدا لازم نیست. میانبر استی روی دسکتاپ هم ساخته می‌شود.
+
+اگر زیپ خواستید:
 https://github.com/mohammad-mahdikhani/one-project/raw/cursor/ste-excel-price-plugin-7da3/STE-Windows.zip
-
-زیپ را باز کنید. نصب.bat را بزنید تا میانبر روی دسکتاپ بیاید، یا مستقیم استی.bat را اجرا کنید.
-پایتون جدا لازم نیست. اولین اجرا چند ثانیه طول می‌کشد.
-مرورگر روی http://127.0.0.1:5055 باز می‌شود.
