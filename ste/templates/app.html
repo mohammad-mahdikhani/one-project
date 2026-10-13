@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>قیمت ست کن</title>
+  <meta name="application-name" content="قیمت ست کن">
+  <meta name="apple-mobile-web-app-title" content="قیمت ست کن">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="theme-color" content="#0c6b5c">
+  <link rel="manifest" href="{{ url_for('static', filename='manifest.json') }}">
+  <link rel="icon" type="image/png" sizes="192x192" href="{{ url_for('static', filename='icon-192.png') }}">
+  <link rel="apple-touch-icon" href="{{ url_for('static', filename='icon-192.png') }}">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/rastikerdar/vazirmatn@v33.003/Vazirmatn-font-face.css">
+  <link rel="stylesheet" href="{{ url_for('static', filename='app.css') }}">
+</head>
+<body>
+  <header class="top">
+    <div>
+      <p class="eyebrow">تطبیق هوشمند قیمت</p>
+      <h1>قیمت ست کن</h1>
+      <p class="lead">قیمت‌ها تومان است. اسم را کلمه‌به‌کلمه و مخفف‌هایی مثل QC و QE را با کالاهای سایت تطبیق می‌دهد.</p>
+    </div>
+    <button type="button" id="status-pill" class="pill off">سایت وصل نیست</button>
+  </header>
+
+  <main>
+    <section class="steps">
+      <article class="panel step">
+        <p class="step-num">۱</p>
+        <h2>وصل کردن سایت</h2>
+        <p class="muted">از ووکامرس → تنظیمات → پیشرفته → REST API یک کلید با دسترسی خواندن/نوشتن بسازید.</p>
+        <form id="settings-form" class="stack">
+          <label>آدرس فروشگاه<input name="wp_url" dir="ltr" placeholder="https://shop.com"></label>
+          <label>کلید Consumer Key<input name="woo_key" dir="ltr" placeholder="ck_..."></label>
+          <label>سکرت Consumer Secret<input name="woo_secret" dir="ltr" type="password" placeholder="cs_..."></label>
+          <div class="actions">
+            <button class="primary" type="submit">تست و ذخیره اتصال</button>
+            <p id="settings-note" class="muted">تا وقتی سایت وصل نشود، سینک روی کاتالوگ داخل اپ انجام می‌شود.</p>
+          </div>
+        </form>
+      </article>
+
+      <article class="panel step">
+        <p class="step-num">۲</p>
+        <h2>گرفتن قیمت</h2>
+        <div class="tabs">
+          <button type="button" class="tab on" data-tab="telegram">کانال تلگرام</button>
+          <button type="button" class="tab" data-tab="file">اکسل / PDF</button>
+        </div>
+        <form id="telegram-form" class="tab-pane">
+          <div class="controls">
+            <label>کانال تامین‌کننده
+              <input id="channel" name="channel" dir="ltr" placeholder="@channel یا demo">
+            </label>
+            <label class="hidden">مقصد
+              <select id="source" name="source">
+                <option value="">خودکار</option>
+                <option value="woo">سایت ووکامرس</option>
+                <option value="local">کاتالوگ داخل اپ</option>
+              </select>
+            </label>
+            <label>چند صفحه
+              <input id="pages" type="number" min="1" max="10" value="5">
+            </label>
+            <button type="submit" class="primary">خواندن کانال</button>
+          </div>
+        </form>
+        <form id="upload-form" class="tab-pane hidden">
+          <label class="drop" id="drop">
+            <input id="file" name="file" type="file" accept=".xlsx,.xlsm,.csv,.pdf">
+            <strong>فایل لیست قیمت را بیندازید</strong>
+            <span>xlsx ، csv یا PDF</span>
+          </label>
+          <div class="controls">
+            <button type="submit" class="primary">خواندن فایل</button>
+            <a class="ghost" href="/api/template">نمونه اکسل</a>
+          </div>
+          <p id="file-name" class="muted"></p>
+        </form>
+        <div class="controls">
+          <label class="check"><input type="checkbox" id="accept_suggested"> پیشنهادهای اسمی را هم سینک کن</label>
+          <label class="check"><input type="checkbox" id="create_missing"> کالای جدید روی سایت بساز</label>
+        </div>
+      </article>
+    </section>
+
+    <section id="messages" class="panel hidden">
+      <h2>پیام‌های کانال</h2>
+      <div id="message-list" class="list"></div>
+    </section>
+
+    <section id="stats" class="stats hidden"></section>
+    <section id="results" class="panel hidden">
+      <div class="sync-head">
+        <h2>۳ — بررسی و سینک</h2>
+        <p id="target-note" class="muted"></p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>وضعیت</th>
+              <th>کد</th>
+              <th>نام منبع</th>
+              <th>قیمت جدید (تومان)</th>
+              <th>کالای سایت</th>
+              <th>قیمت فعلی (تومان)</th>
+              <th>اختلاف</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+      <div class="actions">
+        <button id="apply" class="primary" type="button">سینک با سایت</button>
+        <p id="apply-note" class="muted"></p>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>کالاهای مقصد</h2>
+      <div id="products" class="list"></div>
+    </section>
+  </main>
+  <script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

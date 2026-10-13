@@ -1,0 +1,6 @@
+.ste-wrap { max-width: 1100px; }
+.ste-wrap table td { vertical-align: top; }
+.ste-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; }
+.ste-update { background: #e3f5ea; }
+.ste-create { background: #fde8e6; }
+.ste-suggest { background: #fff1d6; }
