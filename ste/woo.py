@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import base64
-import json
-import socket
-from ssl import SSLError
-from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
+from .httputil import HttpError, normalize_shop_url, request_json
 from .matcher import Product
 
 
@@ -25,13 +21,11 @@ def site_connected(settings: dict) -> bool:
 
 
 def _shop_base(settings: dict) -> tuple[str, str, str]:
-    base = (settings.get("wp_url") or "").strip().rstrip("/")
+    base = normalize_shop_url(settings.get("wp_url") or "")
     key = (settings.get("woo_key") or "").strip()
     secret = (settings.get("woo_secret") or "").strip()
     if not base or not key or not secret:
         raise WooError("آدرس فروشگاه و کلید ووکامرس را در تنظیمات بگذارید")
-    if not base.startswith("http://") and not base.startswith("https://"):
-        raise WooError("آدرس سایت باید با https:// شروع شود")
     return base, key, secret
 
 
@@ -43,68 +37,109 @@ def _woo_urls(base: str, path: str, key: str, secret: str) -> list[str]:
     pretty += auth
     route = path.replace("?", "&", 1)
     fallback = f"{base}/?rest_route=/wc/v3/{route}&{auth}"
-    return [pretty, fallback]
+    index = f"{base}/index.php?rest_route=/wc/v3/{route}&{auth}"
+    urls = [pretty, fallback, index]
+    if "://" in base:
+        scheme, rest = base.split("://", 1)
+        host = rest.split("/")[0]
+        if host.startswith("www."):
+            alt = f"{scheme}://{host[4:]}"
+        else:
+            alt = f"{scheme}://www.{host}"
+        if alt != base:
+            urls.append(pretty.replace(base, alt, 1))
+    return urls
 
 
-def _request(settings: dict, method: str, path: str, payload: dict | None = None, timeout: int = 30) -> tuple[object, dict]:
+def _explain(status: int, body: object) -> WooError:
+    if status == 401:
+        return WooError("کلید ووکامرس رد شد. در ووکامرس کلید جدید با دسترسی خواندن/نوشتن بسازید و دوباره کپی کنید.")
+    if status == 404:
+        return WooError("آدرس REST پیدا نشد. در وردپرس تنظیمات → پیوندهای یکتا را روی «نام نوشته» بگذارید و ذخیره کنید.")
+    if status == 403:
+        return WooError("هاست درخواست را بست. افزونه امنیتی یا کلودفلر REST را مسدود کرده است.")
+    if isinstance(body, str) and "<" in body:
+        return WooError("سایت صفحه HTML داد، نه ووکامرس. آدرس فروشگاه را بدون مسیر اضافه بگذارید.")
+    return WooError(f"ووکامرس پاسخ {status} داد")
+
+
+def _headers(key: str, secret: str, use_basic: bool) -> dict[str, str]:
+    headers = {"Accept": "application/json"}
+    if use_basic:
+        token = base64.b64encode(f"{key}:{secret}".encode("utf-8")).decode("ascii")
+        headers["Authorization"] = f"Basic {token}"
+    return headers
+
+
+def _call(url: str, method: str, key: str, secret: str, payload: dict | None, timeout: int, insecure: bool, use_basic: bool):
+    return request_json(
+        url,
+        method=method,
+        headers=_headers(key, secret, use_basic),
+        payload=payload,
+        timeout=timeout,
+        insecure=insecure,
+    )
+
+
+def _request(settings: dict, method: str, path: str, payload: dict | None = None, timeout: int = 35) -> tuple[object, dict]:
     base, key, secret = _shop_base(settings)
-    token = base64.b64encode(f"{key}:{secret}".encode("utf-8")).decode("ascii")
-    headers = {
-        "Content-Type": "application/json",
-        "User-Agent": "Mozilla/5.0 STE-PriceSync/1.0",
-        "Authorization": f"Basic {token}",
-        "Accept": "application/json",
-    }
-    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    insecure = str(settings.get("ssl_insecure") or "") == "1"
     last_error: Exception | None = None
-    for url in _woo_urls(base, path, key, secret):
-        request = Request(url, data=body, method=method, headers=headers)
-        try:
-            with urlopen(request, timeout=timeout) as response:
-                raw = response.read()
-                out_headers = {item.lower(): value for item, value in response.headers.items()}
-                return (json.loads(raw) if raw else {}), out_headers
-        except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:240]
-            if exc.code == 401:
-                last_error = WooError(
-                    "کلید ووکامرس رد شد. در ووکامرس کلید جدید با دسترسی خواندن/نوشتن بسازید و دوباره کپی کنید."
-                )
+    tried: set[tuple[str, bool, bool]] = set()
+
+    for url in _woo_urls(base, path, key, secret)[:3]:
+        for use_basic in (False, True):
+            mode = (url, use_basic, insecure)
+            if mode in tried:
                 continue
-            if exc.code == 404:
-                last_error = WooError(
-                    "آدرس REST پیدا نشد. در وردپرس تنظیمات → پیوندهای یکتا را روی «نام نوشته» بگذارید و ذخیره کنید."
-                )
+            tried.add(mode)
+            try:
+                status, body, headers = _call(url, method, key, secret, payload, timeout, insecure, use_basic)
+            except HttpError as exc:
+                if str(exc) == "ssl" and not insecure:
+                    try:
+                        status, body, headers = _call(url, method, key, secret, payload, timeout, True, use_basic)
+                        settings["ssl_insecure"] = "1"
+                        insecure = True
+                    except HttpError:
+                        last_error = WooError("گواهی https سایت یا ویندوز مشکل دارد.")
+                        continue
+                elif str(exc) == "سایت دیر جواب می‌دهد":
+                    raise WooError("سایت دیر جواب می‌دهد. دوباره تست کنید؛ اگر باز نشد از همان اینترنت فروشگاه امتحان کنید.") from exc
+                else:
+                    raise WooError("به سایت وصل نشد. آدرس را مثل https://shop.com بگذارید و اینترنت را چک کنید.") from exc
+            if 200 <= status < 300:
+                return body, headers
+            last_error = _explain(status, body)
+            if status == 401 and not use_basic:
                 continue
-            if exc.code == 403:
-                last_error = WooError("هاست درخواست را بست. افزونه امنیتی یا کلودفلر REST را مسدود کرده است.")
-                continue
-            if "<" in detail:
-                last_error = WooError("سایت صفحه HTML داد، نه ووکامرس. آدرس فروشگاه را بدون مسیر اضافه بگذارید.")
-                continue
-            last_error = WooError(f"ووکامرس پاسخ {exc.code} داد")
-        except (TimeoutError, socket.timeout) as exc:
-            last_error = WooError("سایت دیر جواب می‌دهد. دوباره تست کنید؛ اگر باز نشد از همان شبکه سایت امتحان کنید.")
-        except SSLError as exc:
-            last_error = WooError("گواهی https سایت مشکل دارد.")
-        except URLError as exc:
-            last_error = WooError("به سایت وصل نشد. اینترنت و آدرس https://aquasafe.ir را چک کنید.")
+            if status == 401:
+                raise last_error
+            if status == 404:
+                break
+            raise last_error
     raise last_error or WooError("اتصال به فروشگاه برقرار نشد")
 
 
 def test_connection(settings: dict) -> dict:
-    body, headers = _request(settings, "GET", "products?per_page=1&status=any", timeout=25)
+    settings = dict(settings)
+    settings["wp_url"] = normalize_shop_url(settings.get("wp_url") or "")
+    body, headers = _request(settings, "GET", "products?per_page=1", timeout=40)
     count = headers.get("x-wp-total")
     sample = ""
     if isinstance(body, list) and body:
         sample = str(body[0].get("name") or "")
         if not count:
             count = "1"
+    elif isinstance(body, dict) and body.get("code"):
+        raise WooError(str(body.get("message") or body.get("code")))
     return {
         "ok": True,
-        "url": (settings.get("wp_url") or "").rstrip("/"),
+        "url": settings["wp_url"],
         "product_count": int(count or 0),
         "sample": sample,
+        "ssl_insecure": str(settings.get("ssl_insecure") or "") == "1",
     }
 
 
@@ -112,7 +147,7 @@ def fetch_products(settings: dict, per_page: int = 100) -> list[Product]:
     page = 1
     items: list[Product] = []
     while True:
-        batch, _headers = _request(settings, "GET", f"products?per_page={per_page}&page={page}&status=any")
+        batch, _headers = _request(settings, "GET", f"products?per_page={per_page}&page={page}")
         if not isinstance(batch, list) or not batch:
             break
         for row in batch:

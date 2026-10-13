@@ -225,10 +225,10 @@ settingsForm.addEventListener("submit", async (event) => {
     settingsNote.textContent = "آدرس سایت، کلید و سکرت را کامل پر کنید.";
     return;
   }
-  settingsNote.textContent = "در حال تست اتصال به سایت… اگر سایت سنگین باشد تا ۳۰ ثانیه صبر کنید.";
+  settingsNote.textContent = "در حال تست اتصال به سایت… اگر فروشگاه سنگین باشد تا یک دقیقه صبر کنید.";
   button.disabled = true;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 32000);
+  const timer = setTimeout(() => controller.abort(), 70000);
   try {
     const response = await fetch("/api/site/test", {
       method: "POST",
@@ -246,7 +246,7 @@ settingsForm.addEventListener("submit", async (event) => {
     setStatus({ connected: true, url: data.url, source: "woo" });
     loadProducts();
   } catch (error) {
-    settingsNote.textContent = "سایت جواب نداد یا اینترنت بسته است. بدون اتصال هم می‌توانید کانال demo را تست کنید.";
+    settingsNote.textContent = "سایت جواب نداد. آدرس را با https://shop.com بگذارید، کلید را دوباره کپی کنید و از اینترنت خود فروشگاه تست کنید.";
     setStatus({ connected: false, url: payload.wp_url, source: "local" });
   } finally {
     clearTimeout(timer);

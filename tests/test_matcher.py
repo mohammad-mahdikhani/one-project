@@ -30,14 +30,31 @@ def test_match_economy_401_by_name():
     sheet = SheetRow(row=2, sku="01105559", name="دستگاه تصفیه آب آکواجوی مدل 401 (E) اکونومی", price=325000000)
     result = match_row(sheet, site)
     assert result.action == "update"
-    assert result.score >= 88
+    assert result.score >= 90
 
 
 def test_generic_401_is_not_economy():
     site = [Product(id=1, sku="", name="تصفیه آب آکواجوی مدل 401", price=1)]
     sheet = SheetRow(row=2, sku="01105559", name="دستگاه تصفیه آب آکواجوی مدل 401 (E) اکونومی", price=325000000)
     result = match_row(sheet, site)
-    assert result.action != "update"
+    assert result.action == "create"
+    assert result.suggested is None
+
+
+def test_generic_brand_does_not_match_elite():
+    site = [Product(id=1, sku="", name="دستگاه تصفیه آب آکواجوی الیت ELITE", price=1)]
+    sheet = SheetRow(row=3, sku="", name="دستگاه تصفیه آب آکواجوی", price=400000000)
+    result = match_row(sheet, site)
+    assert result.action == "create"
+    assert result.suggested is None
+
+
+def test_filter_does_not_match_device():
+    site = [Product(id=1, sku="", name="دستگاه تصفیه آب آکواجوی الیت ELITE", price=1)]
+    sheet = SheetRow(row=8, sku="", name="فیلتر کربن نهایی آکواجوی LP", price=12900000)
+    result = match_row(sheet, site)
+    assert result.action == "create"
+    assert result.reason == "روی سایت پیدا نشد"
 
 
 def test_do_not_match_elite_with_lotus():

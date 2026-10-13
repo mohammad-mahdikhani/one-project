@@ -6,9 +6,9 @@ import re
 from dataclasses import dataclass, field
 from html import unescape
 from pathlib import Path
-from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
-from urllib.request import Request, urlopen
+
+from .httputil import HttpError, request_url
 
 from .importer import read_message_text, read_upload
 from .matcher import SheetRow
@@ -94,20 +94,20 @@ def parse_channel_html(html: str, slug: str) -> list[ChannelMessage]:
 
 
 def fetch_preview(url: str) -> str:
-    request = Request(
-        url,
-        headers={
-            "User-Agent": "Mozilla/5.0 STE-PriceBot (+https://t.me/s) Telegram price sync",
-            "Accept-Language": "fa,en;q=0.8",
-        },
-    )
     try:
-        with urlopen(request, timeout=25) as response:
-            return response.read().decode("utf-8", errors="replace")
-    except HTTPError as exc:
-        raise TelegramError(f"تلگرام پاسخ {exc.code} داد") from exc
-    except URLError as exc:
-        raise TelegramError(f"به پیش‌نمایش کانال وصل نشد: {exc.reason}") from exc
+        result = request_url(
+            url,
+            headers={
+                "User-Agent": "Mozilla/5.0 STE-PriceBot (+https://t.me/s) Telegram price sync",
+                "Accept-Language": "fa,en;q=0.8",
+            },
+            timeout=25,
+        )
+    except HttpError as exc:
+        raise TelegramError("به پیش‌نمایش کانال وصل نشد") from exc
+    if result.status >= 400:
+        raise TelegramError(f"تلگرام پاسخ {result.status} داد")
+    return result.body.decode("utf-8", errors="replace")
 
 
 def crawl_channel(channel: str, pages: int = 3, fetch=fetch_preview) -> dict:

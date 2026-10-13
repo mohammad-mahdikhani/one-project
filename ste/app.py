@@ -12,6 +12,7 @@ from .matcher import match_rows
 from .normalize import format_money
 from .site_seed import SITE_PRODUCTS
 from .telegram import TelegramError, crawl_channel
+from .httputil import normalize_shop_url
 from .woo import WooError, create_product, fetch_products, push_price, site_connected, site_ready, test_connection
 
 ROOT = Path(__file__).resolve().parent
@@ -111,6 +112,8 @@ def api_site_status():
 @APP.post("/api/site/test")
 def api_site_test():
     payload = request.get_json(silent=True) or {}
+    if payload.get("wp_url"):
+        payload["wp_url"] = normalize_shop_url(str(payload.get("wp_url") or ""))
     with connect() as conn:
         if payload:
             save_settings(conn, payload)
@@ -124,9 +127,12 @@ def api_site_test():
     except Exception:
         with connect() as conn:
             save_settings(conn, {"site_connected": "0", "default_source": "local"})
-        return jsonify(error="سایت جواب نداد. بدون اتصال هم می‌توانید demo را تست کنید.", connected=False), 502
+        return jsonify(error="سایت جواب نداد. آدرس را با https:// بگذارید و دوباره تست کنید.", connected=False), 502
+    extra = {"default_source": "woo", "site_connected": "1", "wp_url": info["url"]}
+    if info.get("ssl_insecure"):
+        extra["ssl_insecure"] = "1"
     with connect() as conn:
-        save_settings(conn, {"default_source": "woo", "site_connected": "1"})
+        save_settings(conn, extra)
     return jsonify({**info, "connected": True, "source": "woo"})
 
 
