@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass, field
 from difflib import SequenceMatcher
 
-from .normalize import fold_persian, model_tokens, name_tokens, normalize_code, normalize_name
+from .normalize import acronym_tokens, fold_persian, model_tokens, name_tokens, normalize_code, normalize_name
 
 AUTO_UPDATE_SCORE = 78
 SUGGEST_SCORE = 58
@@ -156,16 +156,16 @@ def token_score(sheet_name: str, product_name: str) -> tuple[int, str]:
     if sheet_norm == product_norm:
         return 98, "نام یکسان است"
 
-    sheet_words = name_tokens(sheet_name)
-    product_words = name_tokens(product_name)
+    sheet_words = [ALIASES.get(word, word) for word in name_tokens(sheet_name)]
+    product_words = [ALIASES.get(word, word) for word in name_tokens(product_name)]
     if not sheet_words or not product_words:
         return 0, "واژه قابل تطابق ندارد"
 
     sheet_set = set(sheet_words)
     product_set = set(product_words)
     overlap = sheet_set & product_set
-    sheet_all = set(sheet_norm.split())
-    product_all = set(product_norm.split())
+    sheet_all = set(sheet_norm.replace("-", " ").split())
+    product_all = set(product_norm.replace("-", " ").split())
     sheet_kind = sheet_all & PRODUCT_KINDS
     product_kind = product_all & PRODUCT_KINDS
     if sheet_kind and product_kind and sheet_kind.isdisjoint(product_kind):
@@ -183,6 +183,12 @@ def token_score(sheet_name: str, product_name: str) -> tuple[int, str]:
     if sheet_mark and product_mark and sheet_mark.isdisjoint(product_mark):
         return 0, "مدل کالا فرق دارد"
 
+    sheet_codes = acronym_tokens(sheet_name)
+    product_codes = acronym_tokens(product_name)
+    shared_codes = sheet_codes & product_codes
+    if sheet_codes and product_codes and not shared_codes:
+        return 0, "مخفف کالا فرق دارد"
+
     sheet_models = model_tokens(sheet_name)
     product_models = model_tokens(product_name)
     shared_models = sheet_models & product_models
@@ -195,28 +201,31 @@ def token_score(sheet_name: str, product_name: str) -> tuple[int, str]:
         other = {m for m in product_models if m.isdigit()}
         if numeric and other and numeric.isdisjoint(other) and not shared_digits:
             return 0, "مدل کالا فرق دارد"
-        if (sheet_mark & DISTINCTIVE) and (product_mark & DISTINCTIVE) and sheet_mark.isdisjoint(product_mark):
-            return 0, "مدل کالا فرق دارد"
 
     recall = len(overlap) / len(sheet_set) if sheet_set else 0
     precision = len(overlap) / len(product_set) if product_set else 0
     dice = 2 * len(overlap) / (len(sheet_set) + len(product_set)) if (sheet_set or product_set) else 0
     fuzzy = SequenceMatcher(None, sheet_norm, product_norm).ratio()
     alias_hit = len(sheet_alias & product_alias)
-    base = int(round(100 * (0.28 * recall + 0.22 * precision + 0.20 * dice + 0.30 * fuzzy)))
+    base = int(round(100 * (0.34 * recall + 0.20 * precision + 0.16 * dice + 0.30 * fuzzy)))
     if shared_models:
         base += min(18, 6 * len(shared_models))
+    if shared_codes:
+        base += min(16, 8 * len(shared_codes))
     if shared_digits:
         base += min(10, 4 * len(shared_digits))
     if alias_hit:
-        base += min(10, 3 * alias_hit)
+        base += min(12, 4 * alias_hit)
     if sheet_mark and sheet_mark == product_mark:
-        base += 8
+        base += 10
+    if recall >= 0.7 and (shared_models or sheet_mark & product_mark or alias_hit >= 3):
+        base = max(base, 86)
 
     if sheet_mark != product_mark and (sheet_mark or product_mark):
         base = min(base, 74)
 
-    return min(max(base, 0), 96), "تطابق هوشمند نام و عدد"
+    reason = "تطابق کلمه‌به‌کلمه" if recall >= 0.6 else "تطابق هوشمند نام و عدد"
+    return min(max(base, 0), 96), reason
 
 
 def _decide(sheet: SheetRow, product: Product | None, score: int, reason: str, suggested: Product | None = None) -> MatchResult:

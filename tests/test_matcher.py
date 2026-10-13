@@ -6,7 +6,7 @@ from ste.site_seed import SITE_PRODUCTS
 def test_persian_letters_and_money():
     assert normalize_name("شرح كالاي پالستيكي") == "شرح کالای پلاستیکی"
     assert parse_money("132,000,000") == 132000000
-    assert format_money(132000000) == "132٬000٬000"
+    assert format_money(132000000) == "132٬000٬000 تومان"
 
 
 def test_match_by_supplier_code():
@@ -98,3 +98,25 @@ def test_google_hit_matches_shop_url():
     results = match_rows(rows, site, shop_url="https://shop.com", search=lambda *args, **kwargs: hits)
     assert results[0].action == "update"
     assert results[0].product.id == 4
+
+
+def test_word_by_word_elite_and_brand():
+    site = [Product(id=4, sku="", name="تصفیه آب آکواجوی الیت", price=1)]
+    sheet = SheetRow(row=1, sku="", name="دستگاه تصفیه آب آکواجوی مدل الیت( ELITE )", price=546000000)
+    result = match_row(sheet, site)
+    assert result.action == "update"
+    assert result.score >= 78
+
+
+def test_qc_acronym_matches_hyphen_form():
+    site = [Product(id=8, sku="", name="فیلتر کربن نهایی آکواجوی LP با اتصال QC", price=1)]
+    sheet = SheetRow(row=1, sku="", name="فیلتر کربن نهایی آکواجوی LP-QC", price=12900000)
+    result = match_row(sheet, site)
+    assert result.action == "update"
+
+
+def test_qe_does_not_match_qc():
+    site = [Product(id=8, sku="", name="فیلتر کربن نهایی آکواجوی QC", price=1)]
+    sheet = SheetRow(row=1, sku="", name="فیلتر کربن نهایی آکواجوی QE", price=12900000)
+    result = match_row(sheet, site)
+    assert result.action != "update"

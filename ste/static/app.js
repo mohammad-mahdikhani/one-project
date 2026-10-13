@@ -29,7 +29,7 @@ const labels = {
 
 function money(value) {
   if (value === null || value === undefined || value === "") return "—";
-  return Number(value).toLocaleString("fa-IR");
+  return `${Number(value).toLocaleString("fa-IR")} تومان`;
 }
 
 function siteSource() {

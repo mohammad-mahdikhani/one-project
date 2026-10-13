@@ -56,11 +56,13 @@ OCR_FIXES = (
 )
 
 STOPWORDS = {
-    "دستگاه", "مدل", "با", "و", "در", "به", "از", "برای", "بدون", "تا",
+    "مدل", "با", "و", "در", "به", "از", "برای", "بدون", "تا",
     "عدد", "عددی", "سري", "سری", "پک", "بسته", "طول", "بطول", "سایز",
     "اینچ", "میکرون", "لیتر", "روز", "سفید", "آبی", "مشکی", "سیاه",
-    "نقره", "ای", "تایوان", "ساده", "کامل", "خاص", "مخصوص",
+    "نقره", "ای", "تایوان", "ساده", "کامل", "خاص", "مخصوص", "اتصال",
 }
+
+UNIT_TOKENS = {"gpd", "psi", "vac", "mm", "cm", "inch"}
 
 SPACE_RE = re.compile(r"[\s\u200c\u200f\u202a-\u202e]+")
 PUNCT_RE = re.compile(r"[()\[\]{},.;:|/\\'\"«»<>`~!@#$%^&+=?]+")
@@ -88,16 +90,27 @@ def normalize_name(text: str) -> str:
 
 def name_tokens(text: str) -> list[str]:
     tokens = []
-    for raw in normalize_name(text).split():
+    for raw in normalize_name(text).replace("-", " ").split():
         if raw in STOPWORDS or len(raw) == 1:
             continue
         tokens.append(raw)
     return tokens
 
 
+def acronym_tokens(text: str) -> set[str]:
+    found: set[str] = set()
+    value = normalize_name(text).replace("-", " ")
+    for raw in value.split():
+        if raw in UNIT_TOKENS or raw in STOPWORDS:
+            continue
+        if re.fullmatch(r"[a-z]{2,4}", raw):
+            found.add(raw)
+    return found
+
+
 def model_tokens(text: str) -> set[str]:
     value = normalize_name(text)
-    found: set[str] = set()
+    found: set[str] = set(acronym_tokens(text))
     for match in re.finditer(r"[a-z]{1,10}\d{1,4}[a-z0-9\-]*|\d{2,4}[a-z]{2,6}|\d+\s*gpd|[a-z]{2,}(?:-[a-z0-9]+)+", value):
         token = match.group(0).replace(" ", "")
         if token not in STOPWORDS:
@@ -106,7 +119,7 @@ def model_tokens(text: str) -> set[str]:
         number = match.group(1)
         if number not in {"10", "12", "20", "24", "220"}:
             found.add(number)
-    for special in ("elite", "prime", "lotus", "legend", "tulip", "lilium", "vita", "orchid", "sakura", "qc", "ln", "hs", "lp", "bb", "slim", "inline", "hepa", "voc"):
+    for special in ("elite", "prime", "lotus", "legend", "tulip", "lilium", "vita", "orchid", "sakura", "qc", "qe", "ln", "hs", "lp", "bb", "slim", "inline", "hepa", "voc"):
         if re.search(rf"\b{special}\b", value):
             found.add(special)
     return found
@@ -142,4 +155,4 @@ def parse_money(value, allow_empty: bool = False) -> int | None:
 def format_money(value: int | None) -> str:
     if value is None:
         return "—"
-    return f"{int(value):,}".replace(",", "٬")
+    return f"{int(value):,}".replace(",", "٬") + " تومان"
