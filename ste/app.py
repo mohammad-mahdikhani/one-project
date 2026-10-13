@@ -121,6 +121,10 @@ def api_site_test():
         with connect() as conn:
             save_settings(conn, {"site_connected": "0", "default_source": "local"})
         return jsonify(error=str(exc), connected=False), 502
+    except Exception:
+        with connect() as conn:
+            save_settings(conn, {"site_connected": "0", "default_source": "local"})
+        return jsonify(error="سایت جواب نداد. بدون اتصال هم می‌توانید demo را تست کنید.", connected=False), 502
     with connect() as conn:
         save_settings(conn, {"default_source": "woo", "site_connected": "1"})
     return jsonify({**info, "connected": True, "source": "woo"})

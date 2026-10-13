@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import socket
+from ssl import SSLError
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -46,12 +48,16 @@ def _request(settings: dict, method: str, path: str, payload: dict | None = None
                 "اتصال به ووکامرس برقرار نشد. آدرس سایت، کلید REST و دسترسی خواندن/نوشتن را چک کنید."
             ) from exc
         raise WooError(f"ووکامرس پاسخ {exc.code} داد: {detail}") from exc
+    except (TimeoutError, socket.timeout) as exc:
+        raise WooError("سایت جواب نداد. آدرس را چک کنید یا بعداً دوباره تست کنید.") from exc
+    except SSLError as exc:
+        raise WooError("گواهی امنیتی سایت قبول نشد. آدرس را با https:// درست بنویسید.") from exc
     except URLError as exc:
-        raise WooError(f"اتصال به فروشگاه برقرار نشد: {exc.reason}") from exc
+        raise WooError("اتصال به فروشگاه برقرار نشد. اینترنت و آدرس سایت را چک کنید.") from exc
 
 
 def test_connection(settings: dict) -> dict:
-    body, headers = _request(settings, "GET", "products?per_page=1&status=any", timeout=12)
+    body, headers = _request(settings, "GET", "products?per_page=1&status=any", timeout=8)
     count = headers.get("x-wp-total")
     sample = ""
     if isinstance(body, list) and body:

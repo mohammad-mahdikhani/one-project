@@ -219,22 +219,39 @@ apply.addEventListener("click", async () => {
 
 settingsForm.addEventListener("submit", async (event) => {
   event.preventDefault();
-  settingsNote.textContent = "در حال تست اتصال به سایت…";
+  const button = settingsForm.querySelector("button");
   const payload = Object.fromEntries(new FormData(settingsForm).entries());
-  const response = await fetch("/api/site/test", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  const data = await response.json();
-  if (!response.ok) {
-    settingsNote.textContent = data.error || "سایت جواب نداد";
-    setStatus({ connected: false, url: payload.wp_url, source: "local" });
+  if (!payload.wp_url || !payload.woo_key || !payload.woo_secret) {
+    settingsNote.textContent = "آدرس سایت، کلید و سکرت را کامل پر کنید.";
     return;
   }
-  settingsNote.textContent = `وصل شد. ${data.product_count} کالا روی سایت است.`;
-  setStatus({ connected: true, url: data.url, source: "woo" });
-  loadProducts();
+  settingsNote.textContent = "در حال تست اتصال به سایت…";
+  button.disabled = true;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const response = await fetch("/api/site/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      signal: controller.signal,
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      settingsNote.textContent = data.error || "سایت جواب نداد. می‌توانید بدون سایت با demo کار کنید.";
+      setStatus({ connected: false, url: payload.wp_url, source: "local" });
+      return;
+    }
+    settingsNote.textContent = `وصل شد. ${data.product_count} کالا روی سایت است.`;
+    setStatus({ connected: true, url: data.url, source: "woo" });
+    loadProducts();
+  } catch (error) {
+    settingsNote.textContent = "سایت جواب نداد یا اینترنت بسته است. بدون اتصال هم می‌توانید کانال demo را تست کنید.";
+    setStatus({ connected: false, url: payload.wp_url, source: "local" });
+  } finally {
+    clearTimeout(timer);
+    button.disabled = false;
+  }
 });
 
 loadSettings();
