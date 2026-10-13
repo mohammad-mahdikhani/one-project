@@ -100,7 +100,7 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.10"
+APP_VERSION = "1.0.11"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -961,15 +961,90 @@ def http_request(method: str, url: str, payload=None, headers=None, form=None, t
         raise AppError("اتصال برقرار نشد: زمان درخواست تمام شد", 502) from exc
 
 
-def woo_url(settings: dict, path: str, extra: dict | None = None) -> str:
+def woo_target(settings: dict, path: str, extra: dict | None, auth: str, style: str) -> tuple[str, dict]:
     base = clean_base(settings.get("wp_url") or "")
-    query = {
-        "consumer_key": settings.get("woo_key") or "",
-        "consumer_secret": settings.get("woo_secret") or "",
-    }
-    if extra:
-        query.update(extra)
-    return f"{base}/wp-json/wc/v3/{path}?{urllib.parse.urlencode(query)}"
+    key = str(settings.get("woo_key") or "").strip()
+    secret = str(settings.get("woo_secret") or "").strip()
+    query = {str(name): str(value) for name, value in (extra or {}).items()}
+    headers = {}
+    if auth == "basic":
+        token = base64.b64encode(f"{key}:{secret}".encode()).decode()
+        headers["Authorization"] = f"Basic {token}"
+    else:
+        query["consumer_key"] = key
+        query["consumer_secret"] = secret
+    route = "/wc/v3/" + path.strip("/")
+    if style == "index":
+        url = f"{base}/index.php?rest_route={urllib.parse.quote(route)}"
+        if query:
+            url += "&" + urllib.parse.urlencode(query)
+    else:
+        url = f"{base}/wp-json{route}"
+        if query:
+            url += "?" + urllib.parse.urlencode(query)
+    return url, headers
+
+
+def woo_failure(status: int, body) -> str:
+    if isinstance(body, dict):
+        message = str(body.get("message") or "").strip()
+        if message:
+            return f"ووکامرس: {message[:220]}"
+        raw = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str(body.get("raw") or ""))).strip()
+        if raw:
+            return f"ووکامرس: {raw[:180]}"
+    if status in {401, 403}:
+        return "ووکامرس کلید را نپذیرفت. Consumer key و Consumer secret را از ووکامرس، تنظیمات، پیشرفته، REST API دوباره بسازید."
+    if status == 404:
+        return "آدرس ووکامرس پیدا نشد. آدرس همان صفحه فروشگاه باشد، مثل https://aquasafe.ir"
+    return "اتصال به فروشگاه برقرار نشد. آدرس را با https:// بنویسید."
+
+
+def woo_request(settings: dict, method: str, path: str, extra: dict | None = None, payload=None):
+    require_woo(settings)
+    last_error = None
+    last = (0, None)
+    for auth, style in (("query", "pretty"), ("basic", "pretty"), ("query", "index"), ("basic", "index")):
+        url, headers = woo_target(settings, path, extra, auth, style)
+        try:
+            status, body = http_request(method, url, payload=payload, headers=headers, timeout=20)
+        except AppError as exc:
+            last_error = exc
+            continue
+        last = (status, body)
+        if status < 400:
+            return status, body
+        if status not in {401, 403, 404}:
+            break
+    if last[0] == 0 and last_error:
+        raise last_error
+    raise AppError(woo_failure(last[0], last[1]), 502)
+
+
+def wordpress_status(settings: dict) -> str:
+    base = clean_base(settings.get("wp_url") or "")
+    last_error = None
+    for url in (base + "/wp-json/", base + "/wp-json", base + "/?rest_route=/"):
+        try:
+            status, body = http_request("GET", url, timeout=20)
+        except AppError as exc:
+            last_error = exc
+            continue
+        if status < 400 and isinstance(body, dict) and body.get("name"):
+            return f"اتصال برقرار است: {body.get('name')}"
+    try:
+        status, body = http_request("GET", base + "/wp-login.php", timeout=20)
+    except AppError as exc:
+        if last_error:
+            raise last_error
+        raise
+    raw = body.get("raw", "") if isinstance(body, dict) else ""
+    lowered = raw.lower()
+    if status < 400 and ("وردپرس" in raw or "wordpress" in lowered or "wp-login" in lowered):
+        return "صفحه ورود وردپرس باز شد، ولی فهرست فروشگاه پاسخ نداد."
+    if last_error:
+        raise last_error
+    raise AppError("وردپرس پاسخ نداد. آدرس سایت را با https:// بنویسید.", 502)
 
 
 def require_woo(settings: dict):
@@ -1385,11 +1460,11 @@ def gateway_verify(settings: dict, sale) -> str:
             raise AppError("پرداخت زیبال تأیید نشد", 502)
         return str(body.get("refNumber") or ref)
     if gateway == "woocommerce":
-        code, body = http_request("GET", woo_url(settings, f"orders/{ref}"))
-        if code >= 400 or not isinstance(body, dict):
-            raise AppError("وب‌بیکری وضعیت سفارش را نداد", 502)
+        _code, body = woo_request(settings, "GET", f"orders/{ref}")
+        if not isinstance(body, dict):
+            raise AppError("فروشگاه وضعیت سفارش را نداد", 502)
         if body.get("status") not in {"processing", "completed"}:
-            raise AppError("پرداخت در وب‌بیکری هنوز تأیید نشده است", 502)
+            raise AppError("پرداخت در فروشگاه هنوز تأیید نشده است", 502)
         return str(body.get("transaction_id") or ref)
     raise AppError("درگاه ناشناخته است")
 
@@ -2494,8 +2569,8 @@ def woo_push():
         for offset in range(0, len(pairs), 20):
             chunk = pairs[offset:offset + 20]
             body = {kind: [item for _pid, item in chunk]}
-            status, response = http_request("POST", woo_url(settings, "products/batch"), body)
-            if status >= 400 or not isinstance(response, dict) or not isinstance(response.get(kind), list):
+            status, response = woo_request(settings, "POST", "products/batch", payload=body)
+            if not isinstance(response, dict) or not isinstance(response.get(kind), list):
                 message = response.get("message") if isinstance(response, dict) else str(status)
                 raise AppError(f"ووکامرس خطا داد: {message}", 502)
             with connect() as conn:
@@ -2581,12 +2656,9 @@ def fetch_woo_variations(settings: dict, woo_id: int) -> list[dict]:
     found = []
     page = 1
     while page <= 20:
-        status, rows = http_request(
-            "GET",
-            woo_url(settings, f"products/{int(woo_id)}/variations", {"per_page": "100", "page": str(page)}),
+        _status, rows = woo_request(
+            settings, "GET", f"products/{int(woo_id)}/variations", {"per_page": "100", "page": str(page)},
         )
-        if status >= 400:
-            raise AppError("دریافت متغیرهای ووکامرس ناموفق بود", 502)
         if not isinstance(rows, list):
             raise AppError("پاسخ متغیرهای ووکامرس نامعتبر است", 502)
         found.extend(row for row in rows if isinstance(row, dict))
@@ -2709,9 +2781,7 @@ def woo_pull():
     imported = updated = 0
     page = 1
     while page <= 40:
-        status, remote_rows = http_request("GET", woo_url(settings, "products", {"per_page": "50", "page": str(page)}))
-        if status >= 400:
-            raise AppError("دریافت از ووکامرس ناموفق بود", 502)
+        _status, remote_rows = woo_request(settings, "GET", "products", {"per_page": "50", "page": str(page)})
         if not isinstance(remote_rows, list) or not remote_rows:
             break
         prepared = []
@@ -3864,24 +3934,19 @@ def inquiry_sale_moadian(sale_id: int):
 @app.post("/api/settings/test/<kind>")
 def test_setting(kind: str):
     require_admin()
+    posted = request.get_json(silent=True) or {}
     with connect() as conn:
         settings = get_settings(conn)
+        for key in ("wp_url", "woo_key", "woo_secret"):
+            text = str(posted.get(key) or "").strip()
+            if text:
+                settings[key] = text
         if kind == "wp":
-            base = clean_base(settings.get("wp_url") or "")
-            status, body = http_request("GET", base + "/wp-json")
-            if status < 400 and isinstance(body, dict) and body.get("name"):
-                message = f"اتصال برقرار است: {body.get('name')}"
-            else:
-                status, body = http_request("GET", base + "/wp-login.php")
-                raw = body.get("raw", "") if isinstance(body, dict) else ""
-                if status >= 400 or "وردپرس" not in raw:
-                    raise AppError("وردپرس پاسخ نداد", 502)
-                message = "ورود وردپرس webakery.ir برقرار است. صفحه فروشگاه الان خطای سرور می‌دهد."
+            message = wordpress_status(settings)
         elif kind == "woo":
-            require_woo(settings)
-            status, body = http_request("GET", woo_url(settings, "products", {"per_page": "1"}))
-            if status >= 400 or not isinstance(body, list):
-                raise AppError("ووکامرس احراز هویت را نپذیرفت", 502)
+            _status, body = woo_request(settings, "GET", "products", {"per_page": "1"})
+            if not isinstance(body, list):
+                raise AppError("ووکامرس فهرست کالا نداد", 502)
             message = "اتصال ووکامرس برقرار است"
         elif kind == "pos":
             host = (settings.get("pos_host") or "").strip()

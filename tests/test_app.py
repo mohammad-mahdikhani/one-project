@@ -495,6 +495,57 @@ class DaftarchiTest(unittest.TestCase):
         finally:
             appmod.http_request = original
 
+    def test_woo_test_uses_the_typed_shop_and_retries_auth(self):
+        seen = []
+
+        def fake_http(method, url, payload=None, headers=None, form=None, timeout=12):
+            import base64
+            seen.append((url, headers or {}))
+            auth = (headers or {}).get("Authorization", "")
+            if auth.startswith("Basic "):
+                decoded = base64.b64decode(auth.split()[1]).decode()
+                if decoded == "ck_live:cs_live":
+                    return 200, [{"id": 7, "name": "فیلتر"}]
+                return 401, {"code": "woocommerce_rest_authentication_error", "message": "کلید API نامعتبر است"}
+            if "consumer_key=ck_live" in url:
+                return 401, {"code": "woocommerce_rest_authentication_error", "message": "کلید API نامعتبر است"}
+            if url.endswith("/wp-json/") or url.endswith("/wp-json"):
+                return 200, {"name": "فروشگاه آکواسیف"}
+            return 404, {"message": "پیدا نشد"}
+
+        original = appmod.http_request
+        appmod.http_request = fake_http
+        try:
+            self.client.put("/api/settings", json={
+                "wp_url": "https://old.example",
+                "woo_key": "ck_old",
+                "woo_secret": "cs_old",
+            })
+            denied = self.client.post("/api/settings/test/woo", json={
+                "wp_url": "https://aquasafe.ir/",
+                "woo_key": "ck_live",
+                "woo_secret": "",
+            })
+            self.assertEqual(denied.status_code, 502, denied.get_json())
+            self.assertIn("کلید API نامعتبر است", denied.get_json()["error"])
+            connected = self.client.post("/api/settings/test/woo", json={
+                "wp_url": "https://aquasafe.ir/",
+                "woo_key": "ck_live",
+                "woo_secret": "cs_live",
+            })
+            self.assertEqual(connected.status_code, 200, connected.get_json())
+            self.assertIn("اتصال ووکامرس برقرار است", connected.get_json()["message"])
+            self.assertTrue(any(url.startswith("https://aquasafe.ir/wp-json/wc/v3/products?") and "ck_live" in url for url, _headers in seen))
+            self.assertTrue(any(headers.get("Authorization", "").startswith("Basic ") for _url, headers in seen))
+            saved = self.client.get("/api/settings").get_json()["settings"]
+            self.assertEqual(saved["wp_url"], "https://old.example")
+            self.assertEqual(saved["woo_key"], "ck_old")
+            site = self.client.post("/api/settings/test/wp", json={"wp_url": "https://aquasafe.ir"})
+            self.assertEqual(site.status_code, 200, site.get_json())
+            self.assertIn("فروشگاه آکواسیف", site.get_json()["message"])
+        finally:
+            appmod.http_request = original
+
     def test_license_pays_through_zibal(self):
         calls = []
 
@@ -747,7 +798,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.0.10")
+        self.assertEqual(appmod.APP_VERSION, "1.0.11")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -772,9 +823,10 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
-        self.assertIn("1.0.10", run)
+        self.assertIn("1.0.11", run)
         self.assertIn("invoice-edge", script)
         self.assertIn("نوع متغیر را انتخاب کنید", script)
+        self.assertIn("همین مقدارهای نوشته‌شده", script)
         self.assertIn("var-line", script)
         self.assertIn("لوگوی سایت", script)
         self.assertIn("buyer-first", script)
@@ -792,7 +844,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.0.10")
+        self.assertEqual(boot["version"], "1.0.11")
         pay = Path("/workspace/site-updates/daftarchi/pay.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-pay", pay)
         self.assertIn("gateway.zibal.ir/v1/request", pay)

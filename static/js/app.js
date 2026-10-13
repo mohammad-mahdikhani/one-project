@@ -744,6 +744,7 @@ function settingsHtml() {
     <section class="card"><h2 class="section-title">وردپرس و ووکامرس</h2>
       ${field("wp_url", "آدرس سایت")}${field("woo_key", "Consumer key")}${field("woo_secret", "Consumer secret", "password")}
       <div class="row-actions"><button type="button" class="btn" data-act="test-setting" data-kind="wp">آزمایش وردپرس</button><button type="button" class="btn" data-act="test-setting" data-kind="woo">آزمایش ووکامرس</button></div>
+      <p class="hint">آدرس همان صفحه فروشگاه است، مثل https://aquasafe.ir. دکمه آزمایش همین مقدارهای نوشته‌شده را می‌زند. کلید را از ووکامرس، تنظیمات، پیشرفته، REST API بسازید و دسترسی خواندن و نوشتن بدهید.</p>
     </section>
     <section class="card"><h2 class="section-title">کارت‌خوان ایرانی</h2>
       <div class="field"><label>شرکت</label><select name="pos_provider">${options([["manual", "دستی"], ["saman", "سامان کیش"], ["behpardakht", "به‌پرداخت ملت"], ["parsian", "پارسیان"], ["irankish", "ایران‌کیش"], ["sepehr", "سپهر"], ["asanpardakht", "آسان‌پرداخت"]], s.pos_provider)}</select></div>
@@ -1294,7 +1295,13 @@ async function onClick(event) {
       toast(result.message || "انجام شد");
       render();
     } else if (act === "test-setting") {
-      const result = await api(`/api/settings/test/${el.dataset.kind}`, { method: "POST", body: {} });
+      const form = document.querySelector("form[data-act=save-settings]");
+      const data = form ? Object.fromEntries(new FormData(form).entries()) : {};
+      const result = await api(`/api/settings/test/${el.dataset.kind}`, { method: "POST", body: {
+        wp_url: data.wp_url || "",
+        woo_key: data.woo_key || "",
+        woo_secret: data.woo_secret || "",
+      } });
       toast(result.message);
     }
   });

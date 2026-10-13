@@ -1,5 +1,5 @@
 {
-  "version": "1.0.10",
+  "version": "1.0.11",
   "url": "https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi.exe",
-  "notes": "کالای متغیر ووکامرس یک کالا می‌ماند و نوع و موجودی هر متغیر زیر همان کالا می‌آید. دور فاکتور هم لوگوی سایت است."
+  "notes": "اتصال ووکامرس آدرس نوشته‌شده در فرم را می‌زند و اگر کلید در آدرس قبول نشود، با روش دوم دوباره تلاش می‌کند."
 }
