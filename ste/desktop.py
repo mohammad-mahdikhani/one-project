@@ -1,4 +1,4 @@
-"""Open STE as a standalone desktop window, like an installed website app."""
+"""Open STE in the default browser and keep the local server running."""
 
 from __future__ import annotations
 
@@ -25,9 +25,11 @@ LOG_FILE = ROOT / "ste-error.log"
 
 
 def log(message: str) -> None:
+    line = message.rstrip()
+    print(line, flush=True)
     try:
         with LOG_FILE.open("a", encoding="utf-8") as handle:
-            handle.write(message.rstrip() + "\n")
+            handle.write(line + "\n")
     except OSError:
         pass
 
@@ -64,7 +66,7 @@ def start_server(port: int) -> None:
         log(traceback.format_exc())
 
 
-def wait_ready(url: str, seconds: float = 30) -> bool:
+def wait_ready(url: str, seconds: float = 40) -> bool:
     deadline = time.time() + seconds
     while time.time() < deadline:
         try:
@@ -87,13 +89,7 @@ def browser_path() -> str | None:
     for path in names:
         if path and os.path.isfile(path):
             return path
-    return (
-        shutil.which("msedge")
-        or shutil.which("chrome")
-        or shutil.which("google-chrome")
-        or shutil.which("chromium")
-        or shutil.which("chromium-browser")
-    )
+    return shutil.which("msedge") or shutil.which("chrome")
 
 
 def app_window_args(browser: str, profile: Path, url: str = URL) -> list[str]:
@@ -104,37 +100,12 @@ def app_window_args(browser: str, profile: Path, url: str = URL) -> list[str]:
         f"--user-data-dir={profile}",
         "--no-first-run",
         "--no-default-browser-check",
-        "--disable-extensions",
-        "--disable-sync",
-        "--disable-infobars",
-        "--disable-features=Translate,TranslateUI,ChromeWhatsNewUI",
-        "--hide-crash-restore-bubble",
         "--new-window",
     ]
 
 
-def open_desktop_window(url: str) -> None:
-    browser = browser_path()
-    profile = ROOT / "app-profile"
-    profile.mkdir(exist_ok=True)
-    if browser:
-        log(f"open app window {browser}")
-        try:
-            process = subprocess.Popen(app_window_args(browser, profile, url), cwd=str(ROOT))
-        except OSError as exc:
-            log(f"browser launch failed: {exc}")
-            browser = None
-        else:
-            for _ in range(20):
-                time.sleep(0.15)
-                if process.poll() is not None:
-                    log("browser process exited early; keeping STE open in default browser")
-                    browser = None
-                    break
-            else:
-                process.wait()
-                return
-    log(f"open browser {url}")
+def open_browser(url: str) -> None:
+    log(f"open {url}")
     try:
         if sys.platform == "win32":
             os.startfile(url)  # type: ignore[attr-defined]
@@ -142,7 +113,15 @@ def open_desktop_window(url: str) -> None:
             webbrowser.open(url)
     except OSError:
         webbrowser.open(url)
-    threading.Event().wait()
+    browser = browser_path()
+    if not browser:
+        return
+    profile = ROOT / "app-profile"
+    profile.mkdir(exist_ok=True)
+    try:
+        subprocess.Popen(app_window_args(browser, profile, url), cwd=str(ROOT))
+    except OSError as exc:
+        log(f"app window skipped: {exc}")
 
 
 def run() -> None:
@@ -152,14 +131,17 @@ def run() -> None:
         sys.path.insert(0, str(ROOT))
     PORT = find_open_port()
     URL = f"http://{HOST}:{PORT}"
-    log(f"start STE on {URL}")
+    log(f"STE starting on {URL}")
     threading.Thread(target=start_server, args=(PORT,), daemon=True).start()
     if not wait_ready(URL):
         raise RuntimeError(
-            "STE server did not start. Close old STE windows and run STE.bat again.\n"
+            "STE server did not start. Close old STE windows and run RUN-ME.bat again.\n"
             f"Log: {LOG_FILE}"
         )
-    open_desktop_window(URL)
+    open_browser(URL)
+    log("STE is running. Keep this window open.")
+    log("Close this window to stop STE.")
+    threading.Event().wait()
 
 
 def main() -> None:

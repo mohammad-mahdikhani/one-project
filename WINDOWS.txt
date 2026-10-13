@@ -1,8 +1,9 @@
-https://github.com/mohammad-mahdikhani/one-project/raw/cursor/ste-excel-price-plugin-7da3/STE-Setup.exe
+https://github.com/mohammad-mahdikhani/one-project/raw/cursor/ste-excel-price-plugin-7da3/STE-Windows.zip
 
-1. STE-Setup.exe را دانلود و باز کنید.
-2. میانبر STE روی دسکتاپ می‌آید. همان را بزنید.
-3. اگر پنجره نیامد، این فایل را باز کنید:
-   C:\Users\USER\AppData\Local\STE\STE.bat
-   متن خطا روی صفحه می‌ماند.
-4. اگر باز هم نشد، فایل ste-error.log همان پوشه را بفرستید.
+1. ZIP را دانلود کنید (حدود ۱۶ مگابایت).
+2. Extract / استخراج کنید.
+3. داخل پوشه STE روی RUN-ME.bat دوبار کلیک کنید.
+4. پنجره سیاه را نبندید. مرورگر باز می‌شود.
+
+اگر ویندوز گفت Protected your PC: More info -> Run anyway
+اگر Setup.exe کار نکرد، همین ZIP را استفاده کنید.
