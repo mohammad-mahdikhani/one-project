@@ -1,5 +1,5 @@
 {
-  "version": "1.0.11",
+  "version": "1.0.12",
   "url": "https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi.exe",
-  "notes": "اتصال ووکامرس آدرس نوشته‌شده در فرم را می‌زند و اگر کلید در آدرس قبول نشود، با روش دوم دوباره تلاش می‌کند."
+  "notes": "کلید ووکامرس امضا می‌شود، چون بعضی فروشگاه‌ها کلید داخل آدرس را قبول نمی‌کنند. کلید باید با کاربر مدیر و دسترسی خواندن و نوشتن ساخته شود و در کادر Consumer key دیده شود."
 }

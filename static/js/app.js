@@ -725,8 +725,9 @@ function smsHtml() {
 function options(pairs, current) {
   return pairs.map(([value, label]) => `<option value="${value}" ${value === current ? "selected" : ""}>${label}</option>`).join("");
 }
-function field(key, label, type = "text") {
-  return `<div class="field"><label>${label}</label><input name="${key}" type="${type}" value="${esc(state.settings[key] || "")}" ${type === "text" && /url|host|phone|sender|key|user|merchant|callback/.test(key) ? `class="ltr"` : ""}></div>`;
+function field(key, label, type = "text", placeholder = "") {
+  const hold = placeholder ? ` placeholder="${esc(placeholder)}"` : "";
+  return `<div class="field"><label>${label}</label><input name="${key}" type="${type}" value="${esc(state.settings[key] || "")}"${hold} ${type === "text" && /url|host|phone|sender|key|user|merchant|callback/.test(key) ? `class="ltr"` : ""}></div>`;
 }
 function settingsHtml() {
   const s = state.settings;
@@ -742,9 +743,9 @@ function settingsHtml() {
       <p class="hint">لوگو دور فاکتور و بالای آن می‌نشیند. لوگوی سایت را همین‌جا بگذارید. اگر خالی بماند، نشان دفترچی چاپ می‌شود.</p>
     </section>
     <section class="card"><h2 class="section-title">وردپرس و ووکامرس</h2>
-      ${field("wp_url", "آدرس سایت")}${field("woo_key", "Consumer key")}${field("woo_secret", "Consumer secret", "password")}
+      ${field("wp_url", "آدرس سایت")}${field("woo_key", "Consumer key", "text", "ck_...")}${field("woo_secret", "Consumer secret", "password", "cs_...")}
       <div class="row-actions"><button type="button" class="btn" data-act="test-setting" data-kind="wp">آزمایش وردپرس</button><button type="button" class="btn" data-act="test-setting" data-kind="woo">آزمایش ووکامرس</button></div>
-      <p class="hint">آدرس همان صفحه فروشگاه است، مثل https://aquasafe.ir. دکمه آزمایش همین مقدارهای نوشته‌شده را می‌زند. کلید را از ووکامرس، تنظیمات، پیشرفته، REST API بسازید و دسترسی خواندن و نوشتن بدهید.</p>
+      <p class="hint">آدرس همان صفحه فروشگاه است، مثل https://aquasafe.ir. دکمه آزمایش همین مقدارهای نوشته‌شده را می‌زند. کلید را از ووکامرس، تنظیمات، پیشرفته، REST API با کاربر مدیر بسازید و دسترسی را خواندن و نوشتن بگذارید. کادر Consumer key باید پر باشد و با ck_ شروع شود.</p>
     </section>
     <section class="card"><h2 class="section-title">کارت‌خوان ایرانی</h2>
       <div class="field"><label>شرکت</label><select name="pos_provider">${options([["manual", "دستی"], ["saman", "سامان کیش"], ["behpardakht", "به‌پرداخت ملت"], ["parsian", "پارسیان"], ["irankish", "ایران‌کیش"], ["sepehr", "سپهر"], ["asanpardakht", "آسان‌پرداخت"]], s.pos_provider)}</select></div>
@@ -1297,6 +1298,10 @@ async function onClick(event) {
     } else if (act === "test-setting") {
       const form = document.querySelector("form[data-act=save-settings]");
       const data = form ? Object.fromEntries(new FormData(form).entries()) : {};
+      if (el.dataset.kind === "woo" && !String(data.woo_key || "").trim()) {
+        toast("کادر Consumer key خالی است. کلید را بچسبانید؛ با ck_ شروع می‌شود.");
+        return;
+      }
       const result = await api(`/api/settings/test/${el.dataset.kind}`, { method: "POST", body: {
         wp_url: data.wp_url || "",
         woo_key: data.woo_key || "",

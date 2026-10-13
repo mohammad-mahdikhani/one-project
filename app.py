@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import calendar
 import hashlib
+import hmac
 import html
 import json
 import logging
@@ -100,7 +101,7 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.11"
+APP_VERSION = "1.0.12"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -961,7 +962,37 @@ def http_request(method: str, url: str, payload=None, headers=None, form=None, t
         raise AppError("اتصال برقرار نشد: زمان درخواست تمام شد", 502) from exc
 
 
-def woo_target(settings: dict, path: str, extra: dict | None, auth: str, style: str) -> tuple[str, dict]:
+def woo_rfc3986(value: str) -> str:
+    return urllib.parse.quote(str(value), safe="~")
+
+
+def woo_oauth_signature(method: str, base_url: str, params: dict, secret: str) -> str:
+    pairs = []
+    for key in sorted(params):
+        if key == "oauth_signature":
+            continue
+        encoded = woo_rfc3986(urllib.parse.unquote(str(key))) + "=" + woo_rfc3986(urllib.parse.unquote(str(params[key])))
+        pairs.append(woo_rfc3986(encoded))
+    query = "%26".join(pairs)
+    string_to_sign = f"{method.upper()}&{woo_rfc3986(base_url)}&{query}"
+    digest = hmac.new((secret + "&").encode(), string_to_sign.encode(), hashlib.sha256).digest()
+    return base64.b64encode(digest).decode()
+
+
+def woo_oauth_url(method: str, url: str, key: str, secret: str, scheme: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    signed = urllib.parse.urlunsplit((scheme, parsed.netloc, parsed.path, "", ""))
+    requested = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+    params = dict(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True))
+    params["oauth_consumer_key"] = key
+    params["oauth_timestamp"] = str(int(datetime.now(timezone.utc).timestamp()))
+    params["oauth_nonce"] = secrets.token_hex(16)
+    params["oauth_signature_method"] = "HMAC-SHA256"
+    params["oauth_signature"] = woo_oauth_signature(method, signed, params, secret)
+    return requested + "?" + urllib.parse.urlencode(params)
+
+
+def woo_target(settings: dict, method: str, path: str, extra: dict | None, auth: str, style: str, scheme: str) -> tuple[str, dict]:
     base = clean_base(settings.get("wp_url") or "")
     key = str(settings.get("woo_key") or "").strip()
     secret = str(settings.get("woo_secret") or "").strip()
@@ -970,55 +1001,93 @@ def woo_target(settings: dict, path: str, extra: dict | None, auth: str, style: 
     if auth == "basic":
         token = base64.b64encode(f"{key}:{secret}".encode()).decode()
         headers["Authorization"] = f"Basic {token}"
-    else:
+    elif auth == "query":
         query["consumer_key"] = key
         query["consumer_secret"] = secret
     route = "/wc/v3/" + path.strip("/")
     if style == "index":
-        url = f"{base}/index.php?rest_route={urllib.parse.quote(route)}"
+        url = f"{base}/index.php?rest_route={urllib.parse.quote(route, safe='')}"
         if query:
             url += "&" + urllib.parse.urlencode(query)
     else:
         url = f"{base}/wp-json{route}"
         if query:
             url += "?" + urllib.parse.urlencode(query)
+    if auth == "oauth":
+        url = woo_oauth_url(method, url, key, secret, scheme)
     return url, headers
 
 
+def woo_body_text(body) -> tuple[str, str]:
+    if not isinstance(body, dict):
+        return "", ""
+    message = str(body.get("message") or "").strip()
+    if not message:
+        message = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str(body.get("raw") or ""))).strip()
+    return str(body.get("code") or ""), message
+
+
 def woo_failure(status: int, body) -> str:
-    if isinstance(body, dict):
-        message = str(body.get("message") or "").strip()
-        if message:
-            return f"ووکامرس: {message[:220]}"
-        raw = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", str(body.get("raw") or ""))).strip()
-        if raw:
-            return f"ووکامرس: {raw[:180]}"
-    if status in {401, 403}:
-        return "ووکامرس کلید را نپذیرفت. Consumer key و Consumer secret را از ووکامرس، تنظیمات، پیشرفته، REST API دوباره بسازید."
+    _code, message = woo_body_text(body)
+    lowered = message.lower()
+    if "signature" in lowered or "امضا" in message:
+        return "ووکامرس امضا را نپذیرفت. آدرس فروشگاه باید همان آدرس وردپرس باشد، مثل https://aquasafe.ir"
+    if any(word in message for word in ("اجازه", "مشاهده", "لیست منابع", "cannot list", "cannot view")) or "cannot_view" in _code:
+        return "کلید را در ووکامرس با کاربر مدیر بسازید و دسترسی را «خواندن و نوشتن» بگذارید. کادر Consumer key باید پر باشد و با ck_ شروع شود."
+    if message:
+        return f"ووکامرس: {message[:220]}"
+    if status == 401:
+        return "ووکامرس کلید را نپذیرفت. Consumer key و Consumer secret را از ووکامرس، تنظیمات، پیشرفته، REST API دوباره بسازید. دسترسی خواندن و نوشتن باشد."
     if status == 404:
         return "آدرس ووکامرس پیدا نشد. آدرس همان صفحه فروشگاه باشد، مثل https://aquasafe.ir"
     return "اتصال به فروشگاه برقرار نشد. آدرس را با https:// بنویسید."
 
 
+def woo_error_rank(status: int, body) -> int:
+    code, message = woo_body_text(body)
+    lowered = message.lower()
+    if "signature" in lowered or "امضا" in message:
+        return 50
+    if code == "woocommerce_rest_authentication_error" or "نامعتبر" in message or "invalid" in lowered:
+        return 40
+    if status in {401, 403}:
+        return 10
+    return 0
+
+
 def woo_request(settings: dict, method: str, path: str, extra: dict | None = None, payload=None):
     require_woo(settings)
     last_error = None
-    last = (0, None)
-    for auth, style in (("query", "pretty"), ("basic", "pretty"), ("query", "index"), ("basic", "index")):
-        url, headers = woo_target(settings, path, extra, auth, style)
+    best = (0, None, -1)
+    attempts = (
+        ("query", "pretty", "https"),
+        ("oauth", "pretty", "https"),
+        ("oauth", "pretty", "http"),
+        ("basic", "pretty", "https"),
+        ("query", "index", "https"),
+        ("oauth", "index", "https"),
+    )
+    for auth, style, scheme in attempts:
+        url, headers = woo_target(settings, method, path, extra, auth, style, scheme)
         try:
-            status, body = http_request(method, url, payload=payload, headers=headers, timeout=20)
+            status, body = http_request(method, url, payload=payload, headers=headers, timeout=8 if auth == "basic" else 20)
         except AppError as exc:
             last_error = exc
             continue
-        last = (status, body)
         if status < 400:
             return status, body
+        rank = woo_error_rank(status, body)
+        if rank >= best[2]:
+            best = (status, body, rank)
         if status not in {401, 403, 404}:
             break
-    if last[0] == 0 and last_error:
+        _code, message = woo_body_text(body)
+        # کلید در پایگاه ووکامرس نیست. روش‌های بعدی همان جواب را دیرتر تکرار می‌کنند.
+        if auth == "oauth" and rank == 40 and "امضا" not in message and "signature" not in message.lower():
+            break
+    if best[2] < 0 and last_error:
         raise last_error
-    raise AppError(woo_failure(last[0], last[1]), 502)
+    raise AppError(woo_failure(best[0], best[1]), 502)
 
 
 def wordpress_status(settings: dict) -> str:
