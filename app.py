@@ -92,13 +92,15 @@ DEFAULT_SETTINGS = {
     "moadian_vat": "10",
     "moadian_enabled": "0",
     "moadian_sandbox": "1",
+    "shop_name": "دفترچی",
+    "shop_logo": "",
 }
 POS_PROVIDERS = {"manual", "saman", "behpardakht", "parsian", "irankish", "sepehr", "asanpardakht"}
 GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.10"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -529,7 +531,58 @@ def match_product(conn, barcode: str | None, sku: str | None):
     return by_barcode or by_sku
 
 
-def product_dict(row, threshold: int) -> dict:
+def product_kind(row) -> str:
+    if "product_type" not in row.keys():
+        return "simple"
+    return row["product_type"] or "simple"
+
+
+def variation_dict(row) -> dict:
+    try:
+        attributes = json.loads(row["attributes"] or "[]")
+    except json.JSONDecodeError:
+        attributes = []
+    if not isinstance(attributes, list):
+        attributes = []
+    stock = row["stock"]
+    tracked = stock is not None
+    return {
+        "id": row["id"],
+        "woo_id": row["woo_id"],
+        "sku": row["sku"] or "",
+        "barcode": row["barcode"] or "",
+        "price": row["price"],
+        "stock": stock,
+        "tracked": tracked,
+        "in_stock": (int(stock) > 0) if tracked else bool(row["in_stock"]),
+        "label": row["label"],
+        "attributes": attributes,
+        "image": row["image"] or "",
+    }
+
+
+def load_variations(conn, product_ids: list[int]) -> dict[int, list[dict]]:
+    if not product_ids:
+        return {}
+    marks = ",".join("?" for _ in product_ids)
+    rows = conn.execute(
+        f"""SELECT * FROM product_variations
+            WHERE active=1 AND product_id IN ({marks}) ORDER BY id""",
+        product_ids,
+    ).fetchall()
+    grouped: dict[int, list[dict]] = {}
+    for row in rows:
+        grouped.setdefault(row["product_id"], []).append(variation_dict(row))
+    return grouped
+
+
+def product_dict(row, threshold: int, variations: list | None = None) -> dict:
+    variations = variations or []
+    kind = product_kind(row)
+    if kind == "variable" and variations:
+        low = any(item["tracked"] and int(item["stock"]) <= threshold for item in variations) or not any(item["in_stock"] for item in variations)
+    else:
+        low = row["stock"] <= threshold
     return {
         "id": row["id"],
         "name": row["name"],
@@ -542,37 +595,73 @@ def product_dict(row, threshold: int) -> dict:
         "woo_id": row["woo_id"],
         "active": row["active"],
         "tax_code": row["tax_code"] or "",
-        "low": row["stock"] <= threshold,
+        "type": kind,
+        "variations": variations,
+        "low": low,
     }
+
+
+def present_products(conn, rows, threshold: int) -> list[dict]:
+    grouped = load_variations(conn, [row["id"] for row in rows])
+    return [product_dict(row, threshold, grouped.get(row["id"], [])) for row in rows]
+
+
+def present_product(conn, row, threshold: int) -> dict:
+    return present_products(conn, [row], threshold)[0]
 
 
 def load_cart(conn, items) -> tuple[list[dict], int]:
     if not isinstance(items, list) or not items:
         raise AppError("سبد خالی است")
-    merged: dict[int, int] = {}
+    merged: dict[tuple[int, int], int] = {}
     for raw in items:
         if not isinstance(raw, dict):
             raise AppError("قلم کالا نامعتبر است")
         try:
             pid = int(raw.get("product_id") or 0)
+            variation_id = int(raw.get("variation_id") or 0)
         except (TypeError, ValueError):
             raise AppError("کالا نامعتبر است")
-        merged[pid] = merged.get(pid, 0) + parse_qty(raw.get("qty"))
+        key = (pid, variation_id)
+        merged[key] = merged.get(key, 0) + parse_qty(raw.get("qty"))
     result = []
     subtotal = 0
-    for pid, qty in merged.items():
+    for (pid, variation_id), qty in merged.items():
         row = conn.execute("SELECT * FROM products WHERE id=? AND active=1", (pid,)).fetchone()
         if not row:
             raise AppError("کالا پیدا نشد")
-        if qty > row["stock"]:
-            raise AppError(f"موجودی «{row['name']}» کافی نیست")
-        line_total = int(row["price"]) * qty
+        if product_kind(row) == "variable":
+            if not variation_id:
+                raise AppError(f"برای «{row['name']}» نوع متغیر را انتخاب کنید")
+            var = conn.execute(
+                "SELECT * FROM product_variations WHERE id=? AND product_id=? AND active=1",
+                (variation_id, pid),
+            ).fetchone()
+            if not var:
+                raise AppError("این متغیر پیدا نشد")
+            if var["stock"] is None:
+                if not var["in_stock"]:
+                    raise AppError(f"«{row['name']} — {var['label']}» ناموجود است")
+            elif qty > int(var["stock"]):
+                raise AppError(f"موجودی «{row['name']} — {var['label']}» کافی نیست")
+            unit_price = int(var["price"])
+            name = f"{row['name']} — {var['label']}"
+        else:
+            if variation_id:
+                raise AppError("این کالا متغیر نیست")
+            if qty > row["stock"]:
+                raise AppError(f"موجودی «{row['name']}» کافی نیست")
+            unit_price = int(row["price"])
+            name = row["name"]
+            var = None
+        line_total = unit_price * qty
         subtotal += line_total
         result.append({
             "product_id": pid,
-            "name": row["name"],
+            "variation_id": variation_id or None,
+            "name": name,
             "qty": qty,
-            "unit_price": int(row["price"]),
+            "unit_price": unit_price,
             "unit_cost": int(row["cost"]),
             "line_total": line_total,
         })
@@ -595,11 +684,92 @@ def insert_sale(conn, user_id: int, customer: dict, items: list[dict], subtotal:
     sale_id = cur.lastrowid
     for item in items:
         conn.execute(
-            """INSERT INTO sale_items (sale_id, product_id, name, qty, unit_price, unit_cost, line_total)
-               VALUES (?,?,?,?,?,?,?)""",
-            (sale_id, item["product_id"], item["name"], item["qty"], item["unit_price"], item["unit_cost"], item["line_total"]),
+            """INSERT INTO sale_items (sale_id, product_id, variation_id, name, qty, unit_price, unit_cost, line_total)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (
+                sale_id, item["product_id"], item.get("variation_id"), item["name"], item["qty"],
+                item["unit_price"], item["unit_cost"], item["line_total"],
+            ),
         )
     return sale_id
+
+
+def variable_parent_stock(conn, product_id: int) -> int:
+    total = conn.execute(
+        """SELECT COALESCE(SUM(stock), 0) AS total FROM product_variations
+           WHERE product_id=? AND active=1 AND stock IS NOT NULL""",
+        (product_id,),
+    ).fetchone()["total"]
+    price = conn.execute(
+        "SELECT MIN(price) AS price FROM product_variations WHERE product_id=? AND active=1",
+        (product_id,),
+    ).fetchone()["price"]
+    if price is None:
+        conn.execute(
+            "UPDATE products SET stock=?, product_type='variable', updated_at=? WHERE id=?",
+            (int(total), iso(), product_id),
+        )
+    else:
+        conn.execute(
+            "UPDATE products SET stock=?, price=?, product_type='variable', updated_at=? WHERE id=?",
+            (int(total), int(price), iso(), product_id),
+        )
+    return int(total)
+
+
+def line_variation(conn, item):
+    variation_id = int(item["variation_id"] or 0) if item["variation_id"] is not None else 0
+    if not variation_id:
+        return None
+    var = conn.execute(
+        "SELECT * FROM product_variations WHERE id=? AND product_id=? AND active=1",
+        (variation_id, item["product_id"]),
+    ).fetchone()
+    if not var:
+        raise AppError(f"متغیر «{item['name']}» دیگر در سیستم نیست")
+    return var
+
+
+def ensure_line_stock(conn, item):
+    row = conn.execute("SELECT * FROM products WHERE id=?", (item["product_id"],)).fetchone()
+    if not row:
+        raise AppError(f"کالای «{item['name']}» دیگر در سیستم نیست")
+    var = line_variation(conn, item)
+    if var:
+        if var["stock"] is None:
+            if not var["in_stock"]:
+                raise AppError(f"«{item['name']}» ناموجود است")
+            return
+        if int(var["stock"]) < int(item["qty"]):
+            raise AppError(f"موجودی «{item['name']}» کافی نیست")
+        return
+    if product_kind(row) == "variable":
+        raise AppError(f"برای «{row['name']}» نوع متغیر را انتخاب کنید")
+    if row["stock"] < item["qty"]:
+        raise AppError(f"موجودی «{item['name']}» کافی نیست")
+
+
+def take_line_stock(conn, item, user_id: int, sale_id: int, threshold: int) -> list[str]:
+    row = conn.execute("SELECT * FROM products WHERE id=?", (item["product_id"],)).fetchone()
+    var = line_variation(conn, item)
+    if var:
+        if var["stock"] is None:
+            return []
+        new_stock = int(var["stock"]) - int(item["qty"])
+        conn.execute(
+            "UPDATE product_variations SET stock=?, in_stock=? WHERE id=?",
+            (new_stock, 1 if new_stock else 0, var["id"]),
+        )
+        parent_before = int(row["stock"])
+        parent_after = variable_parent_stock(conn, row["id"])
+        alerts = [item["name"]] if parent_before > threshold >= parent_after or (int(var["stock"]) > threshold >= new_stock) else []
+        log_stock(conn, row["id"], "sale", -int(item["qty"]), int(var["stock"]), new_stock, f"فاکتور {sale_id} · {var['label']}", user_id)
+        return alerts
+    new_stock = int(row["stock"]) - int(item["qty"])
+    alerts = [row["name"]] if int(row["stock"]) > threshold >= new_stock else []
+    conn.execute("UPDATE products SET stock=?, updated_at=? WHERE id=?", (new_stock, iso(), row["id"]))
+    log_stock(conn, row["id"], "sale", -int(item["qty"]), int(row["stock"]), new_stock, f"فاکتور {sale_id}", user_id)
+    return alerts
 
 
 def finalize_sale(conn, sale_id: int, user_id: int) -> list[str]:
@@ -615,18 +785,9 @@ def finalize_sale(conn, sale_id: int, user_id: int) -> list[str]:
     threshold = setting_int(settings, "low_stock")
     alerts = []
     for item in items:
-        row = conn.execute("SELECT * FROM products WHERE id=?", (item["product_id"],)).fetchone()
-        if not row:
-            raise AppError(f"کالای «{item['name']}» دیگر در سیستم نیست")
-        if row["stock"] < item["qty"]:
-            raise AppError(f"موجودی «{item['name']}» کافی نیست")
+        ensure_line_stock(conn, item)
     for item in items:
-        row = conn.execute("SELECT * FROM products WHERE id=?", (item["product_id"],)).fetchone()
-        new_stock = int(row["stock"]) - int(item["qty"])
-        if int(row["stock"]) > threshold >= new_stock:
-            alerts.append(row["name"])
-        conn.execute("UPDATE products SET stock=?, updated_at=? WHERE id=?", (new_stock, iso(), row["id"]))
-        log_stock(conn, row["id"], "sale", -int(item["qty"]), int(row["stock"]), new_stock, f"فاکتور {sale_id}", user_id)
+        alerts.extend(take_line_stock(conn, item, user_id, sale_id, threshold))
     if sale["payment_method"] == "credit":
         if not sale["customer_id"]:
             raise AppError("خریدار نسیه مشخص نیست")
@@ -1101,7 +1262,8 @@ def summary_for(conn, kind: str) -> dict:
         """SELECT si.name AS name, SUM(si.qty) AS qty, SUM(si.line_total) AS total
            FROM sale_items si JOIN sales s ON s.id = si.sale_id
            WHERE s.status='paid' AND s.created_at>=? AND s.created_at<?
-           GROUP BY si.product_id ORDER BY total DESC LIMIT 5""",
+           GROUP BY si.product_id, IFNULL(si.variation_id, 0), si.name
+           ORDER BY total DESC LIMIT 5""",
         (iso(start), iso(end)),
     ).fetchall()
     return {
@@ -1448,6 +1610,11 @@ def save_settings(conn, payload: dict):
                 raise AppError("کتابخانه رمزنگاری روی این رایانه نیست. دفترچی را دوباره اجرا کنید.")
             except Exception:
                 raise AppError("کلید خصوصی خوانده نشد. فایل pem کارپوشه را بچسبانید.")
+        elif key == "shop_name":
+            stored = clean_text(value, "نام فروشگاه", 80) or "دفترچی"
+        elif key == "shop_logo":
+            text = str(value or "").strip()
+            stored = clean_image(text) if text else ""
         elif key == "moadian_vat":
             stored = str(parse_money(value or "10", "نرخ مالیات", allow_empty=True))
             if int(stored) > 100:
@@ -1559,12 +1726,28 @@ def init_db():
               id INTEGER PRIMARY KEY,
               sale_id INTEGER NOT NULL,
               product_id INTEGER NOT NULL,
+              variation_id INTEGER,
               name TEXT NOT NULL,
               qty INTEGER NOT NULL,
               unit_price INTEGER NOT NULL,
               unit_cost INTEGER NOT NULL,
               line_total INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS product_variations (
+              id INTEGER PRIMARY KEY,
+              product_id INTEGER NOT NULL,
+              woo_id INTEGER UNIQUE,
+              sku TEXT,
+              barcode TEXT,
+              price INTEGER NOT NULL,
+              stock INTEGER,
+              in_stock INTEGER NOT NULL DEFAULT 1,
+              label TEXT NOT NULL,
+              attributes TEXT NOT NULL,
+              image TEXT,
+              active INTEGER NOT NULL DEFAULT 1
+            );
+            CREATE INDEX IF NOT EXISTS idx_variations_product ON product_variations(product_id);
             CREATE TABLE IF NOT EXISTS journal_entries (
               id INTEGER PRIMARY KEY,
               memo TEXT,
@@ -1684,6 +1867,11 @@ def init_db():
         product_cols = {row["name"] for row in conn.execute("PRAGMA table_info(products)")}
         if "tax_code" not in product_cols:
             conn.execute("ALTER TABLE products ADD COLUMN tax_code TEXT")
+        if "product_type" not in product_cols:
+            conn.execute("ALTER TABLE products ADD COLUMN product_type TEXT NOT NULL DEFAULT 'simple'")
+        sale_item_cols = {row["name"] for row in conn.execute("PRAGMA table_info(sale_items)")}
+        if "variation_id" not in sale_item_cols:
+            conn.execute("ALTER TABLE sale_items ADD COLUMN variation_id INTEGER")
         sale_cols = {row["name"] for row in conn.execute("PRAGMA table_info(sales)")}
         for column in ("moadian_uid", "moadian_taxid", "moadian_reference", "moadian_status", "moadian_error"):
             if column not in sale_cols:
@@ -1785,6 +1973,11 @@ def update_info():
     )
 
 
+def shop_profile(conn) -> dict:
+    settings = get_settings(conn)
+    return {"name": settings.get("shop_name") or "دفترچی", "logo": settings.get("shop_logo") or ""}
+
+
 @app.get("/api/auth/bootstrap")
 def bootstrap():
     with connect() as conn:
@@ -1816,10 +2009,11 @@ def login():
         user = public_user(row)
         flag = get_settings(conn).get("must_change_password") == "1"
         access = ensure_access(conn)
+        shop = shop_profile(conn)
     session.clear()
     session["uid"] = row["id"]
     session.permanent = True
-    return jsonify(user=user, must_change_password=flag, access=access)
+    return jsonify(user=user, must_change_password=flag, access=access, shop=shop)
 
 
 @app.post("/api/auth/register")
@@ -1949,7 +2143,8 @@ def me():
     with connect() as conn:
         flag = get_settings(conn).get("must_change_password") == "1" if user else False
         access = ensure_access(conn) if user else None
-    return jsonify(user=public_user(user) if user else None, must_change_password=flag if user else False, access=access)
+        shop = shop_profile(conn) if user else None
+    return jsonify(user=public_user(user) if user else None, must_change_password=flag if user else False, access=access, shop=shop)
 
 
 @app.post("/api/auth/password")
@@ -2066,13 +2261,19 @@ def list_products():
         if query:
             like = f"%{query}%"
             rows = conn.execute(
-                """SELECT * FROM products WHERE active=1 AND (name LIKE ? OR sku LIKE ? OR barcode LIKE ?)
-                   ORDER BY name""",
-                (like, like, like),
+                """SELECT DISTINCT p.* FROM products p
+                   LEFT JOIN product_variations v ON v.product_id=p.id AND v.active=1
+                   WHERE p.active=1 AND (
+                     p.name LIKE ? OR p.sku LIKE ? OR p.barcode LIKE ?
+                     OR v.label LIKE ? OR v.sku LIKE ? OR v.barcode LIKE ?
+                   )
+                   ORDER BY p.name""",
+                (like, like, like, like, like, like),
             ).fetchall()
         else:
             rows = conn.execute("SELECT * FROM products WHERE active=1 ORDER BY name").fetchall()
-    return jsonify(products=[product_dict(row, threshold) for row in rows])
+        products = present_products(conn, rows, threshold)
+    return jsonify(products=products)
 
 
 @app.post("/api/products")
@@ -2113,7 +2314,8 @@ def create_product():
                 log_stock(conn, product_id, "adjust", stock, 0, stock, "موجودی اولیه", user["id"])
         threshold = setting_int(get_settings(conn), "low_stock")
         row = conn.execute("SELECT * FROM products WHERE id=?", (product_id,)).fetchone()
-    return jsonify(product=product_dict(row, threshold))
+        product = present_product(conn, row, threshold)
+    return jsonify(product=product)
 
 
 @app.patch("/api/products/<int:pid>")
@@ -2132,17 +2334,24 @@ def update_product(pid: int):
         barcode = clean_code(payload["barcode"], "بارکد") if "barcode" in payload else row["barcode"]
         tax_code = clean_tax_code(payload["tax_code"]) if "tax_code" in payload else row["tax_code"]
         image = clean_image(payload["image"]) if "image" in payload else row["image"]
+        variable = product_kind(row) == "variable"
+        if variable:
+            price = row["price"]
+            stock = row["stock"]
         conn.execute(
             """UPDATE products SET name=?, sku=?, barcode=?, price=?, cost=?, stock=?, image=?, tax_code=?, updated_at=? WHERE id=?""",
             (name, sku, barcode, price, cost, stock, image, tax_code, iso(), pid),
         )
-        if price != row["price"]:
+        if not variable and price != row["price"]:
             log_stock(conn, pid, "price", 0, row["price"], price, "تغییر قیمت", user["id"])
-        if stock != row["stock"]:
+        if not variable and stock != row["stock"]:
             log_stock(conn, pid, "adjust", stock - row["stock"], row["stock"], stock, "تعدیل موجودی", user["id"])
+        if variable:
+            variable_parent_stock(conn, pid)
         threshold = setting_int(get_settings(conn), "low_stock")
         updated = conn.execute("SELECT * FROM products WHERE id=?", (pid,)).fetchone()
-    return jsonify(product=product_dict(updated, threshold))
+        product = present_product(conn, updated, threshold)
+    return jsonify(product=product)
 
 
 @app.delete("/api/products/<int:pid>")
@@ -2266,7 +2475,11 @@ def woo_push():
         else:
             rows = conn.execute("SELECT * FROM products WHERE active=1 ORDER BY id").fetchall()
     create_pairs, update_pairs = [], []
+    skipped = 0
     for row in rows:
+        if product_kind(row) == "variable":
+            skipped += 1
+            continue
         item = woo_item(row)
         if row["woo_id"]:
             item["id"] = row["woo_id"]
@@ -2300,7 +2513,191 @@ def woo_push():
         send("create", create_pairs)
     if update_pairs:
         send("update", update_pairs)
-    return jsonify(created=created, updated=updated, failed=failed)
+    return jsonify(created=created, updated=updated, failed=failed, skipped=skipped)
+
+
+def remote_image(remote: dict) -> str:
+    images = remote.get("images") or []
+    src = ""
+    if images and isinstance(images[0], dict):
+        src = str(images[0].get("src") or "")
+    elif isinstance(remote.get("image"), dict):
+        src = str(remote["image"].get("src") or "")
+    return src[:400]
+
+
+def attribute_title(raw: dict, parents: list) -> str:
+    name = str(raw.get("name") or "").strip()
+    try:
+        attr_id = int(raw.get("id") or 0)
+    except (TypeError, ValueError):
+        attr_id = 0
+    if attr_id:
+        for parent in parents:
+            if not isinstance(parent, dict):
+                continue
+            try:
+                parent_id = int(parent.get("id") or 0)
+            except (TypeError, ValueError):
+                parent_id = 0
+            parent_name = str(parent.get("name") or "").strip()
+            if parent_id == attr_id and parent_name:
+                name = parent_name
+                break
+    if name.lower().startswith("pa_"):
+        name = name[3:]
+    return name.replace("_", " ").replace("-", " ").strip()
+
+
+def describe_variation(remote: dict, parents: list) -> tuple[str, list[dict]]:
+    parts = []
+    attributes = []
+    for raw in remote.get("attributes") or []:
+        if not isinstance(raw, dict):
+            continue
+        option = raw.get("option")
+        if isinstance(option, list):
+            option = "، ".join(str(item).strip() for item in option if str(item).strip())
+        option = str(option or "").strip()
+        name = attribute_title(raw, parents)
+        if not name and not option:
+            continue
+        attributes.append({"name": name, "option": option})
+        parts.append(f"{name}: {option}" if name and option else (option or name))
+    label = " · ".join(parts)[:200] or "بدون نوع"
+    return label, attributes
+
+
+def variation_numbers(remote: dict) -> tuple[int | None, int]:
+    status = str(remote.get("stock_status") or "instock")
+    if remote.get("manage_stock"):
+        raw = remote.get("stock_quantity")
+        stock = parse_money(raw, "موجودی", allow_empty=True) if raw is not None else 0
+        return stock, 1 if stock else 0
+    return None, 0 if status == "outofstock" else 1
+
+
+def fetch_woo_variations(settings: dict, woo_id: int) -> list[dict]:
+    found = []
+    page = 1
+    while page <= 20:
+        status, rows = http_request(
+            "GET",
+            woo_url(settings, f"products/{int(woo_id)}/variations", {"per_page": "100", "page": str(page)}),
+        )
+        if status >= 400:
+            raise AppError("دریافت متغیرهای ووکامرس ناموفق بود", 502)
+        if not isinstance(rows, list):
+            raise AppError("پاسخ متغیرهای ووکامرس نامعتبر است", 502)
+        found.extend(row for row in rows if isinstance(row, dict))
+        if len(rows) < 100:
+            break
+        page += 1
+    return found
+
+
+def store_variation(conn, product_id: int, remote: dict, parents: list):
+    if str(remote.get("status") or "publish") not in {"publish", ""}:
+        return None
+    try:
+        woo_id = int(remote.get("id") or 0)
+    except (TypeError, ValueError):
+        return None
+    if not woo_id:
+        return None
+    label, attributes = describe_variation(remote, parents)
+    try:
+        price = parse_money(remote.get("price") or remote.get("regular_price") or 0, "قیمت", allow_empty=True)
+        stock, in_stock = variation_numbers(remote)
+    except AppError:
+        return None
+    sku = clean_code(remote.get("sku"), "کد")
+    barcode = remote_barcode(remote)
+    image = remote_image(remote) or None
+    payload = json.dumps(attributes, ensure_ascii=False)
+    existing = conn.execute("SELECT * FROM product_variations WHERE woo_id=?", (woo_id,)).fetchone()
+    if existing:
+        conn.execute(
+            """UPDATE product_variations
+               SET product_id=?, sku=?, barcode=?, price=?, stock=?, in_stock=?, label=?, attributes=?, image=?, active=1
+               WHERE id=?""",
+            (product_id, sku, barcode, price, stock, in_stock, label, payload, image, existing["id"]),
+        )
+        return woo_id
+    conn.execute(
+        """INSERT INTO product_variations
+           (product_id, woo_id, sku, barcode, price, stock, in_stock, label, attributes, image, active)
+           VALUES (?,?,?,?,?,?,?,?,?,?,1)""",
+        (product_id, woo_id, sku, barcode, price, stock, in_stock, label, payload, image),
+    )
+    return woo_id
+
+
+def store_remote_product(conn, remote: dict, variations: list[dict] | None, user_id: int) -> str:
+    sku = str(remote.get("sku") or "").strip() or None
+    barcode = remote_barcode(remote)
+    row = conn.execute("SELECT * FROM products WHERE woo_id=?", (remote.get("id"),)).fetchone()
+    if not row and sku:
+        row = conn.execute("SELECT * FROM products WHERE sku=?", (sku,)).fetchone()
+    image = remote_image(remote)
+    kind = "variable" if variations is not None else "simple"
+    try:
+        price_source = remote.get("regular_price") or remote.get("price") or 0
+        price = parse_money(price_source, "قیمت", allow_empty=True)
+    except AppError:
+        return "skipped"
+    if kind == "simple":
+        raw_stock = remote.get("stock_quantity")
+        stock = parse_money(raw_stock, "موجودی", allow_empty=True) if raw_stock is not None else 0
+    else:
+        stock = 0
+    if row:
+        conn.execute(
+            """UPDATE products SET name=?, sku=COALESCE(?, sku), barcode=COALESCE(?, barcode), price=?, stock=?,
+               image=COALESCE(?, image), woo_id=?, product_type=?, active=1, updated_at=? WHERE id=?""",
+            (remote["name"], sku, barcode, price, stock, image or None, remote.get("id"), kind, iso(), row["id"]),
+        )
+        product_id = row["id"]
+        state = "updated"
+    else:
+        cur = conn.execute(
+            """INSERT INTO products
+               (name, sku, barcode, price, cost, stock, image, woo_id, product_type, active, created_at, updated_at)
+               VALUES (?,?,?,?,0,?,?,?,?,1,?,?)""",
+            (remote["name"], sku, barcode, price, stock, image or None, remote.get("id"), kind, iso(), iso()),
+        )
+        product_id = cur.lastrowid
+        state = "imported"
+    if kind == "variable":
+        seen = []
+        parents = [item for item in (remote.get("attributes") or []) if isinstance(item, dict)]
+        for item in variations or []:
+            woo_id = store_variation(conn, product_id, item, parents)
+            if woo_id:
+                seen.append(woo_id)
+        if seen:
+            marks = ",".join("?" for _ in seen)
+            conn.execute(
+                f"UPDATE product_variations SET active=0 WHERE product_id=? AND (woo_id IS NULL OR woo_id NOT IN ({marks}))",
+                [product_id, *seen],
+            )
+        else:
+            conn.execute("UPDATE product_variations SET active=0 WHERE product_id=?", (product_id,))
+        new_stock = variable_parent_stock(conn, product_id)
+        if row and new_stock != row["stock"]:
+            log_stock(conn, product_id, "adjust", new_stock - int(row["stock"]), int(row["stock"]), new_stock, "دریافت ووکامرس", user_id)
+        elif not row and new_stock:
+            log_stock(conn, product_id, "adjust", new_stock, 0, new_stock, "دریافت ووکامرس", user_id)
+        return state
+    conn.execute("UPDATE product_variations SET active=0 WHERE product_id=?", (product_id,))
+    if row:
+        if price != row["price"]:
+            log_stock(conn, product_id, "price", 0, row["price"], price, "دریافت ووکامرس", user_id)
+        if stock != row["stock"]:
+            log_stock(conn, product_id, "adjust", stock - row["stock"], row["stock"], stock, "دریافت ووکامرس", user_id)
+    elif stock:
+        log_stock(conn, product_id, "adjust", stock, 0, stock, "دریافت ووکامرس", user_id)
+    return state
 
 
 @app.post("/api/products/woo/pull")
@@ -2317,45 +2714,23 @@ def woo_pull():
             raise AppError("دریافت از ووکامرس ناموفق بود", 502)
         if not isinstance(remote_rows, list) or not remote_rows:
             break
+        prepared = []
+        for remote in remote_rows:
+            if not isinstance(remote, dict) or not remote.get("name"):
+                continue
+            if str(remote.get("type") or "simple") == "variation":
+                continue
+            variations = None
+            if str(remote.get("type") or "") == "variable":
+                variations = fetch_woo_variations(settings, int(remote["id"]))
+            prepared.append((remote, variations))
         with connect() as conn:
-            for remote in remote_rows:
-                if not isinstance(remote, dict) or not remote.get("name"):
-                    continue
-                sku = str(remote.get("sku") or "").strip() or None
-                barcode = remote_barcode(remote)
-                row = conn.execute("SELECT * FROM products WHERE woo_id=?", (remote.get("id"),)).fetchone()
-                if not row and sku:
-                    row = conn.execute("SELECT * FROM products WHERE sku=?", (sku,)).fetchone()
-                image = ""
-                images = remote.get("images") or []
-                if images and isinstance(images[0], dict):
-                    image = images[0].get("src") or ""
-                try:
-                    price = parse_money(remote.get("regular_price") or remote.get("price") or 0, "قیمت", allow_empty=True)
-                except AppError:
-                    continue
-                stock = remote.get("stock_quantity")
-                stock = parse_money(stock, "موجودی", allow_empty=True) if stock is not None else 0
-                if row:
-                    conn.execute(
-                        """UPDATE products SET name=?, sku=COALESCE(?, sku), barcode=COALESCE(?, barcode), price=?, stock=?,
-                           image=COALESCE(?, image), woo_id=?, active=1, updated_at=? WHERE id=?""",
-                        (remote["name"], sku, barcode, price, stock, image or None, remote.get("id"), iso(), row["id"]),
-                    )
-                    if price != row["price"]:
-                        log_stock(conn, row["id"], "price", 0, row["price"], price, "دریافت ووکامرس", user["id"])
-                    if stock != row["stock"]:
-                        log_stock(conn, row["id"], "adjust", stock - row["stock"], row["stock"], stock, "دریافت ووکامرس", user["id"])
-                    updated += 1
-                else:
-                    cur = conn.execute(
-                        """INSERT INTO products (name, sku, barcode, price, cost, stock, image, woo_id, active, created_at, updated_at)
-                           VALUES (?,?,?,?,0,?,?,?,1,?,?)""",
-                        (remote["name"], sku, barcode, price, stock, image or None, remote.get("id"), iso(), iso()),
-                    )
-                    if stock:
-                        log_stock(conn, cur.lastrowid, "adjust", stock, 0, stock, "دریافت ووکامرس", user["id"])
+            for remote, variations in prepared:
+                state = store_remote_product(conn, remote, variations, user["id"])
+                if state == "imported":
                     imported += 1
+                elif state == "updated":
+                    updated += 1
         if len(remote_rows) < 50:
             break
         page += 1
@@ -2402,29 +2777,59 @@ def inventory():
                JOIN products p ON p.id = l.product_id ORDER BY l.id DESC LIMIT 40"""
         ).fetchall()
         pay = conn.execute("SELECT id, code, name FROM accounts WHERE code IN ('1000','1010','2000') ORDER BY code").fetchall()
+        listed = present_products(conn, products, threshold)
     return jsonify(
-        products=[product_dict(row, threshold) for row in products],
+        products=listed,
         logs=[{**dict(row), "at_jalali": to_jalali(row["created_at"])} for row in logs],
         pay_accounts=[dict(row) for row in pay],
     )
+
+
+def stock_target(payload) -> tuple[int, int]:
+    raw = str(payload.get("product_id") or "")
+    variation_raw = payload.get("variation_id")
+    if ":" in raw:
+        left, right = raw.split(":", 1)
+        raw = left
+        variation_raw = right
+    try:
+        pid = int(raw or 0)
+        variation_id = int(variation_raw or 0)
+    except (TypeError, ValueError):
+        raise AppError("کالا نامعتبر است")
+    return pid, variation_id
 
 
 @app.post("/api/inventory/adjust")
 def adjust_inventory():
     user = require_admin()
     payload = body_json()
-    try:
-        pid = int(payload.get("product_id") or 0)
-    except (TypeError, ValueError):
-        raise AppError("کالا نامعتبر است")
+    pid, variation_id = stock_target(payload)
     stock = parse_money(payload.get("stock"), "موجودی", allow_empty=True)
     note = clean_text(payload.get("note"), "شرح", 120) or "تعدیل موجودی"
     with connect() as conn:
         row = conn.execute("SELECT * FROM products WHERE id=? AND active=1", (pid,)).fetchone()
         if not row:
             raise AppError("کالا پیدا نشد", 404)
-        conn.execute("UPDATE products SET stock=?, updated_at=? WHERE id=?", (stock, iso(), pid))
-        log_stock(conn, pid, "adjust", stock - row["stock"], row["stock"], stock, note, user["id"])
+        if product_kind(row) == "variable":
+            if not variation_id:
+                raise AppError("موجودی کالای متغیر را روی همان متغیر ثبت کنید")
+            var = conn.execute(
+                "SELECT * FROM product_variations WHERE id=? AND product_id=? AND active=1",
+                (variation_id, pid),
+            ).fetchone()
+            if not var:
+                raise AppError("این متغیر پیدا نشد", 404)
+            old = int(var["stock"] or 0)
+            conn.execute(
+                "UPDATE product_variations SET stock=?, in_stock=? WHERE id=?",
+                (stock, 1 if stock else 0, var["id"]),
+            )
+            variable_parent_stock(conn, pid)
+            log_stock(conn, pid, "adjust", stock - old, old, stock, f"{note} · {var['label']}", user["id"])
+        else:
+            conn.execute("UPDATE products SET stock=?, updated_at=? WHERE id=?", (stock, iso(), pid))
+            log_stock(conn, pid, "adjust", stock - row["stock"], row["stock"], stock, note, user["id"])
     return jsonify(ok=True)
 
 
@@ -2432,10 +2837,7 @@ def adjust_inventory():
 def create_purchase():
     user = require_admin()
     payload = body_json()
-    try:
-        pid = int(payload.get("product_id") or 0)
-    except (TypeError, ValueError):
-        raise AppError("کالا نامعتبر است")
+    pid, variation_id = stock_target(payload)
     qty = parse_qty(payload.get("qty"))
     unit_cost = parse_money(payload.get("unit_cost"), "فی خرید", allow_empty=True)
     pay_code = str(payload.get("pay_code") or "1000")
@@ -2450,10 +2852,33 @@ def create_purchase():
         if pay_code == "1000" and not sess:
             raise AppError("برای پرداخت نقدی، اول صندوق را باز کنید")
         session_id = sess["id"] if sess and pay_code == "1000" else None
-        new_stock = int(row["stock"]) + qty
+        if product_kind(row) == "variable":
+            if not variation_id:
+                raise AppError("خرید کالای متغیر را روی همان متغیر ثبت کنید")
+            var = conn.execute(
+                "SELECT * FROM product_variations WHERE id=? AND product_id=? AND active=1",
+                (variation_id, pid),
+            ).fetchone()
+            if not var:
+                raise AppError("این متغیر پیدا نشد", 404)
+            if var["stock"] is None:
+                raise AppError("این متغیر در ووکامرس موجودی عددی ندارد. اول آنجا موجودی را روشن کنید و دوباره دریافت کنید.")
+            old = int(var["stock"])
+            new_stock = old + qty
+            conn.execute(
+                "UPDATE product_variations SET stock=?, in_stock=? WHERE id=?",
+                (new_stock, 1 if new_stock else 0, var["id"]),
+            )
+            variable_parent_stock(conn, pid)
+            note_name = f"{row['name']} — {var['label']}"
+            log_stock(conn, pid, "purchase", qty, old, new_stock, f"خرید با فی {unit_cost} · {var['label']}", user["id"])
+        else:
+            new_stock = int(row["stock"]) + qty
+            note_name = row["name"]
+            log_stock(conn, pid, "purchase", qty, row["stock"], new_stock, f"خرید با فی {unit_cost}", user["id"])
+            conn.execute("UPDATE products SET stock=?, updated_at=? WHERE id=?", (new_stock, iso(), pid))
         new_cost = moving_avg(int(row["stock"]), int(row["cost"]), qty, unit_cost)
-        conn.execute("UPDATE products SET stock=?, cost=?, updated_at=? WHERE id=?", (new_stock, new_cost, iso(), pid))
-        log_stock(conn, pid, "purchase", qty, row["stock"], new_stock, f"خرید با فی {unit_cost}", user["id"])
+        conn.execute("UPDATE products SET cost=?, updated_at=? WHERE id=?", (new_cost, iso(), pid))
         pay = acc(conn, pay_code)
         cur = conn.execute(
             """INSERT INTO purchases (product_id, qty, unit_cost, total, pay_account_id, session_id, user_id, created_at)
@@ -2463,7 +2888,7 @@ def create_purchase():
         if total:
             post_entry(
                 conn,
-                f"خرید {row['name']}",
+                f"خرید {note_name}",
                 [(acc(conn, "1200")["id"], total, 0), (pay["id"], 0, total)],
                 "purchase",
                 cur.lastrowid,

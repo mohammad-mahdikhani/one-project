@@ -251,32 +251,75 @@ function syncPos() {
   read("buyer-phone", "buyerPhone");
   read("pos-query", "posQuery");
 }
+function variationOf(product, variationId) {
+  return (product?.variations || []).find((item) => item.id === Number(variationId)) || null;
+}
+function sellableStock(product, variation) {
+  if (variation) {
+    return { tracked: variation.tracked !== false, stock: variation.tracked === false ? 0 : Number(variation.stock || 0), inStock: !!variation.in_stock };
+  }
+  return { tracked: true, stock: Number(product?.stock || 0), inStock: Number(product?.stock || 0) > 0 };
+}
 function syncCartStock() {
   state.cart = state.cart.map((line) => {
     const product = state.products.find((item) => item.id === line.id);
-    if (!product || product.stock <= 0) return null;
-    return { ...line, name: product.name, price: product.price, stock: product.stock, qty: Math.min(line.qty, product.stock) };
+    if (!product) return null;
+    const variation = line.variationId ? variationOf(product, line.variationId) : null;
+    if (line.variationId && !variation) return null;
+    const limits = sellableStock(product, variation);
+    if (!limits.inStock) return null;
+    const name = variation ? `${product.name} — ${variation.label}` : product.name;
+    const price = variation ? variation.price : product.price;
+    const stock = limits.tracked ? limits.stock : line.qty;
+    return { ...line, name, price, stock, tracked: limits.tracked, qty: limits.tracked ? Math.min(line.qty, stock) : line.qty };
   }).filter(Boolean);
 }
-function addProduct(product) {
-  if (!product || product.stock <= 0) return toast("این کالا موجودی ندارد");
-  const line = state.cart.find((item) => item.id === product.id);
-  if ((line?.qty || 0) + 1 > product.stock) return toast("موجودی کافی نیست");
+function addProduct(product, variation) {
+  if (!product) return;
+  if (product.type === "variable" && !variation) {
+    if (!product.variations?.length) return toast("این کالای متغیر هنوز نوعی ندارد. دوباره از ووکامرس دریافت کنید.");
+    state.modal = { type: "variations", product };
+    render();
+    return;
+  }
+  const limits = sellableStock(product, variation);
+  if (limits.tracked && limits.stock <= 0) return toast("این کالا موجودی ندارد");
+  if (!limits.tracked && !limits.inStock) return toast("این متغیر ناموجود است");
+  const variationId = variation ? variation.id : 0;
+  const line = state.cart.find((item) => item.id === product.id && (item.variationId || 0) === variationId);
+  const cap = limits.tracked ? limits.stock : 1000000;
+  if ((line?.qty || 0) + 1 > cap) return toast("موجودی کافی نیست");
   if (line) line.qty += 1;
-  else state.cart.push({ id: product.id, name: product.name, price: product.price, qty: 1, stock: product.stock, image: product.image });
+  else state.cart.push({
+    id: product.id,
+    variationId,
+    name: variation ? `${product.name} — ${variation.label}` : product.name,
+    price: variation ? variation.price : product.price,
+    qty: 1,
+    stock: limits.tracked ? limits.stock : 1000000,
+    tracked: limits.tracked,
+    image: (variation && variation.image) || product.image,
+  });
+  state.modal = null;
   state.focusBarcode = true;
   render();
+}
+function matchCode(product, code) {
+  if (product.barcode === code || product.sku === code) return { product, variation: null, parent: true };
+  const variation = (product.variations || []).find((item) => item.barcode === code || item.sku === code);
+  return variation ? { product, variation, parent: false } : null;
 }
 async function addByBarcode(code) {
   const trimmed = code.trim();
   if (trimmed.length < 3) return;
-  let product = state.products.find((item) => item.barcode === trimmed);
-  if (!product) {
+  let hit = state.products.map((product) => matchCode(product, trimmed)).find(Boolean);
+  if (!hit) {
     const data = await api(`/api/products?q=${encodeURIComponent(trimmed)}`);
-    product = data.products.find((item) => item.barcode === trimmed);
+    hit = data.products.map((product) => matchCode(product, trimmed)).find(Boolean);
   }
-  if (!product) return toast("کالایی با این بارکد نیست");
-  addProduct(product);
+  if (!hit) return toast("کالایی با این بارکد نیست");
+  if (hit.parent && hit.product.type === "variable") return addProduct(hit.product);
+  addProduct(hit.product, hit.variation);
   const input = document.getElementById("barcode");
   if (input) input.value = "";
 }
@@ -362,6 +405,51 @@ function authHtml() {
 function logo() {
   return `<svg width="22" height="22" viewBox="0 0 32 32" aria-hidden="true"><rect x="6" y="4" width="20" height="24" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 4v24M16 12h6M16 17h6" stroke="currentColor" stroke-width="2"/></svg>`;
 }
+function shopBrand() {
+  return {
+    name: state.shop?.name || state.settings?.shop_name || "دفترچی",
+    logo: state.shop?.logo || state.settings?.shop_logo || "",
+  };
+}
+function invoiceSeal(big) {
+  const logoUrl = shopBrand().logo;
+  if (logoUrl) return `<img class="seal ${big ? "big" : ""}" src="${esc(logoUrl)}" alt="">`;
+  return `<span class="seal ${big ? "big" : ""}">${logo()}</span>`;
+}
+function invoiceSeals(count) {
+  return Array.from({ length: count }, () => invoiceSeal(false)).join("");
+}
+function receiptHtml(modal) {
+  const sale = modal.sale;
+  const shop = shopBrand();
+  const moadianLabel = { skipped: "شناسه کالا ندارد", failed: "ارسال نشد", sent: "در صف سامانه", pending: "در حال بررسی", success: "تأیید شد" }[sale.moadian_status] || "";
+  const rows = modal.items.map((item) => `<tr><td>${esc(item.name)} × ${num(item.qty)}</td><td class="num">${money(item.line_total)}</td></tr>`).join("");
+  return `<div id="print-area" class="invoice">
+    <div class="invoice-edge">${invoiceSeals(6)}</div>
+    <div class="invoice-middle">
+      <div class="invoice-edge side">${invoiceSeals(4)}</div>
+      <div class="invoice-sheet">
+        <header class="invoice-head">
+          <div class="invoice-brand">${invoiceSeal(true)}<div><strong>${esc(shop.name)}</strong><span class="ltr">webakery.ir</span></div></div>
+          <div class="invoice-meta"><b>فاکتور ${num(sale.id)}</b><span>${esc(sale.at_jalali || "")}</span></div>
+        </header>
+        <p class="invoice-buyer">${esc(sale.customer_name || "")} <span class="ltr">${esc(sale.customer_phone || "")}</span></p>
+        <table><thead><tr><th>کالا</th><th>مبلغ</th></tr></thead><tbody>${rows}</tbody></table>
+        ${sale.discount ? `<p class="invoice-line"><span>تخفیف</span><span class="num">${money(sale.discount)}</span></p>` : ""}
+        <p class="invoice-total"><span>قابل پرداخت</span><span class="num">${money(sale.payable)}</span></p>
+        <p class="invoice-pay">${PAY[sale.payment_method] || ""}</p>
+        ${sale.moadian_taxid ? `<p class="invoice-tax ltr">${esc(sale.moadian_taxid)}</p>` : ""}
+        <p class="invoice-thanks">با تشکر از خرید شما</p>
+      </div>
+      <div class="invoice-edge side">${invoiceSeals(4)}</div>
+    </div>
+    <div class="invoice-edge">${invoiceSeals(6)}</div>
+  </div>
+  ${modal.sms?.detail ? `<p class="hint">${esc(modal.sms.detail)}</p>` : ""}
+  ${moadianLabel ? `<p class="hint">سامانه مودیان: ${esc(moadianLabel)}</p>` : ""}
+  ${sale.moadian_error ? `<p class="hint">${esc(sale.moadian_error)}</p>` : ""}
+  <div class="row-actions"><button type="button" class="btn" data-act="print">چاپ</button>${sale.moadian_status === "success" ? "" : `<button type="button" class="btn primary" data-act="moadian-send" data-id="${sale.id}">ارسال به سامانه مودیان</button>`}${sale.moadian_reference ? `<button type="button" class="btn" data-act="moadian-inquiry" data-id="${sale.id}">استعلام مودیان</button>` : ""}</div>`;
+}
 function shell(content) {
   const nav = NAV.filter((item) => item[2] !== "admin" || isAdmin()).map(([id, title]) => (
     `<button type="button" class="nav-btn ${state.page === id ? "active" : ""}" data-act="nav" data-page="${id}">${title}</button>`
@@ -425,16 +513,38 @@ function dashboardHtml() {
     <section class="card"><h2 class="section-title">آخرین فروش‌ها</h2>${salesTable(state.sales)}</section></div>`;
 }
 
+function productHaystack(product) {
+  const extra = (product.variations || []).map((item) => `${item.label} ${item.sku} ${item.barcode}`).join(" ");
+  return `${product.name} ${product.barcode} ${product.sku} ${product.tax_code || ""} ${extra}`;
+}
+function variationLines(product) {
+  if (product.type !== "variable" || !product.variations?.length) return "";
+  return `<div class="var-list">${product.variations.map((item) => `<div class="var-line"><span>${esc(item.label)}</span><span class="num">${item.tracked ? `موجودی ${num(item.stock)}` : (item.in_stock ? "موجود" : "ناموجود")}</span><span class="num">${money(item.price)}</span></div>`).join("")}</div>`;
+}
+function stockChoices(products) {
+  return products.map((product) => {
+    if (product.type === "variable" && product.variations?.length) {
+      return product.variations.map((item) => `<option value="${product.id}:${item.id}">${esc(product.name)} — ${esc(item.label)}</option>`).join("");
+    }
+    return `<option value="${product.id}">${esc(product.name)}</option>`;
+  }).join("");
+}
 function posTiles() {
   const query = state.posQuery.trim();
-  const rows = state.products.filter((product) => !query || `${product.name} ${product.barcode} ${product.sku}`.includes(query));
+  const rows = state.products.filter((product) => !query || productHaystack(product).includes(query));
   if (!rows.length) return `<p class="empty">کالایی پیدا نشد.</p>`;
-  return `<div class="product-grid">${rows.map((product) => `<button type="button" class="tile" data-act="add-cart" data-id="${product.id}" ${product.stock <= 0 ? "disabled" : ""}>
+  return `<div class="product-grid">${rows.map((product) => {
+    const variable = product.type === "variable" && product.variations?.length;
+    const sellable = variable ? product.variations.some((item) => item.in_stock) : product.stock > 0;
+    const price = variable ? `از ${money(product.price)}` : money(product.price);
+    const stock = variable ? `${num(product.variations.length)} نوع` : `موجودی ${num(product.stock)}`;
+    return `<button type="button" class="tile" data-act="add-cart" data-id="${product.id}" ${sellable ? "" : "disabled"}>
     ${thumb(product.image, product.name)}
     <span class="pname">${esc(product.name)}</span>
-    <span class="num">${money(product.price)}</span>
-    <span class="pstock">موجودی ${num(product.stock)}${product.low ? " · کم" : ""}</span>
-  </button>`).join("")}</div>`;
+    <span class="num">${price}</span>
+    <span class="pstock">${stock}${product.low ? " · کم" : ""}</span>
+  </button>`;
+  }).join("")}</div>`;
 }
 function posHtml() {
   const subtotal = cartSubtotal();
@@ -442,8 +552,8 @@ function posHtml() {
   const payable = subtotal - discount;
   const closed = state.registerInfo && !state.registerInfo.open;
   const lines = state.cart.length ? state.cart.map((line) => `<div class="line"><div><strong>${esc(line.name)}</strong><div class="muted num">${money(line.price)}</div></div>
-    <div><div class="qty"><button type="button" data-act="dec" data-id="${line.id}">−</button><span class="num">${num(line.qty)}</span><button type="button" data-act="inc" data-id="${line.id}">+</button></div>
-    <button type="button" class="btn danger" data-act="remove-line" data-id="${line.id}">حذف</button></div></div>`).join("") : `<p class="empty">سبد خالی است. بارکد را بخوانید یا کالا را انتخاب کنید.</p>`;
+    <div><div class="qty"><button type="button" data-act="dec" data-id="${line.id}" data-variation="${line.variationId || 0}">−</button><span class="num">${num(line.qty)}</span><button type="button" data-act="inc" data-id="${line.id}" data-variation="${line.variationId || 0}">+</button></div>
+    <button type="button" class="btn danger" data-act="remove-line" data-id="${line.id}" data-variation="${line.variationId || 0}">حذف</button></div></div>`).join("") : `<p class="empty">سبد خالی است. بارکد را بخوانید یا کالا را انتخاب کنید.</p>`;
   const pending = state.pending.length ? `<div><h3 class="section-title">پرداخت‌های باز</h3>${state.pending.map((sale) => `<div class="line"><span>فاکتور ${num(sale.id)} · ${money(sale.payable)}</span><button type="button" class="btn" data-act="open-gateway" data-id="${sale.id}">ادامه</button></div>`).join("")}</div>` : "";
   return `<div class="pos">
     <section class="card cart">
@@ -480,10 +590,10 @@ function posHtml() {
 
 function productRows() {
   const query = state.productQuery.trim();
-  const rows = state.products.filter((product) => !query || `${product.name} ${product.barcode} ${product.sku} ${product.tax_code || ""}`.includes(query));
+  const rows = state.products.filter((product) => !query || productHaystack(product).includes(query));
   if (!rows.length) return `<p class="empty">کالایی ثبت نشده. از فرم بالا یا فایل اکسل شروع کنید.</p>`;
   return `<table><thead><tr><th></th><th>نام</th><th>بارکد</th><th>مودیان</th><th>قیمت فروش</th><th>موجودی</th><th></th></tr></thead><tbody>
-    ${rows.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}${product.woo_id ? ` <span class="pill">ووکامرس</span>` : ""}</td><td class="ltr">${esc(product.barcode || "—")}</td><td class="ltr">${esc(product.tax_code || "—")}</td><td class="num">${money(product.price)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td><td class="row-actions"><button type="button" class="btn" data-act="edit-product" data-id="${product.id}">ویرایش</button><button type="button" class="btn danger" data-act="archive-product" data-id="${product.id}">بایگانی</button></td></tr>`).join("")}
+    ${rows.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}${product.woo_id ? ` <span class="pill">ووکامرس</span>` : ""}${product.type === "variable" ? ` <span class="pill">متغیر</span>` : ""}${variationLines(product)}</td><td class="ltr">${esc(product.barcode || "—")}</td><td class="ltr">${esc(product.tax_code || "—")}</td><td class="num">${product.type === "variable" ? `از ${money(product.price)}` : money(product.price)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td><td class="row-actions"><button type="button" class="btn" data-act="edit-product" data-id="${product.id}">ویرایش</button><button type="button" class="btn danger" data-act="archive-product" data-id="${product.id}">بایگانی</button></td></tr>`).join("")}
   </tbody></table>`;
 }
 function productsHtml() {
@@ -499,7 +609,7 @@ function productsHtml() {
       <label class="btn">ورود اکسل<input id="excel-file" type="file" accept=".xlsx" hidden data-act="import-excel"></label>
       <button type="button" class="btn" data-act="woo-push">ارسال همه به ووکامرس</button>
       <button type="button" class="btn" data-act="woo-pull">دریافت از ووکامرس</button>
-    </div><p class="hint">ستون‌های اکسل: نام، کد، بارکد، قیمت، موجودی، قیمت خرید، تصویر، شناسه مودیان. سرستون انگلیسی هم قبول است. تصویر محلی فقط داخل دفترچی می‌ماند؛ ووکامرس آدرس اینترنتی می‌خواهد.</p></section>
+    </div><p class="hint">ستون‌های اکسل: نام، کد، بارکد، قیمت، موجودی، قیمت خرید، تصویر، شناسه مودیان. سرستون انگلیسی هم قبول است. تصویر محلی فقط داخل دفترچی می‌ماند؛ ووکامرس آدرس اینترنتی می‌خواهد. کالای متغیر یک ردیف می‌ماند و نوع و موجودی هر متغیر زیر همان نام می‌آید.</p></section>
     <section class="card"><input id="product-query" value="${esc(state.productQuery)}" placeholder="جستجو"><div id="product-table">${productRows()}</div></section>
   </div>`;
 }
@@ -507,10 +617,10 @@ function productsHtml() {
 function inventoryHtml() {
   const data = state.inventory;
   if (!data) return "";
-  const options = data.products.map((product) => `<option value="${product.id}">${esc(product.name)}</option>`).join("");
+  const options = stockChoices(data.products);
   const pay = data.pay_accounts.map((account) => `<option value="${esc(account.code)}">${esc(account.name)}</option>`).join("");
   return `<div class="stack"><section class="card"><table><thead><tr><th></th><th>کالا</th><th>قیمت</th><th>خرید</th><th>موجودی</th></tr></thead><tbody>
-    ${data.products.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}</td><td class="num">${money(product.price)}</td><td class="num">${money(product.cost)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td></tr>`).join("") || `<tr><td colspan="5">کالایی نیست.</td></tr>`}
+    ${data.products.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}${product.type === "variable" ? ` <span class="pill">متغیر</span>` : ""}${variationLines(product)}</td><td class="num">${money(product.price)}</td><td class="num">${money(product.cost)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td></tr>`).join("") || `<tr><td colspan="5">کالایی نیست.</td></tr>`}
   </tbody></table>
     <details><summary>تعدیل موجودی</summary><form data-act="adjust"><div class="field"><label>کالا</label><select name="product_id">${options}</select></div><div class="field"><label>موجودی جدید</label><input name="stock" inputmode="numeric" required></div><div class="field"><label>شرح</label><input name="note"></div><button class="btn primary" type="submit">ثبت</button></form></details>
     <details><summary>رسید خرید</summary><form data-act="purchase"><div class="grid-2"><div class="field"><label>کالا</label><select name="product_id">${options}</select></div><div class="field"><label>تعداد</label><input name="qty" inputmode="numeric" required></div></div><div class="grid-2"><div class="field"><label>فی خرید</label><input name="unit_cost" inputmode="numeric" required></div><div class="field"><label>پرداخت از</label><select name="pay_code">${pay}</select></div></div><p class="hint">اگر فی خرید وارد شود، میانگین قیمت خرید عوض می‌شود و سند حسابداری می‌خورد.</p><button class="btn primary" type="submit">ثبت خرید</button></form></details>
@@ -623,6 +733,14 @@ function settingsHtml() {
   if (!s) return "";
   const checked = (key) => s[key] === "1" ? "checked" : "";
   return `<form class="stack" data-act="save-settings">
+    <section class="card"><h2 class="section-title">سربرگ فاکتور</h2>
+      ${field("shop_name", "نام فروشگاه روی فاکتور")}
+      <input type="hidden" name="shop_logo" value="${esc(s.shop_logo || "")}">
+      <div class="field"><label>لوگوی سایت</label><input type="file" name="logo_file" accept="image/*"></div>
+      ${s.shop_logo ? `<img class="logo-preview" src="${esc(s.shop_logo)}" alt="">` : ""}
+      <label class="check"><input type="checkbox" name="clear_shop_logo">برداشتن لوگو و برگشت به نشان دفترچی</label>
+      <p class="hint">لوگو دور فاکتور و بالای آن می‌نشیند. لوگوی سایت را همین‌جا بگذارید. اگر خالی بماند، نشان دفترچی چاپ می‌شود.</p>
+    </section>
     <section class="card"><h2 class="section-title">وردپرس و ووکامرس</h2>
       ${field("wp_url", "آدرس سایت")}${field("woo_key", "Consumer key")}${field("woo_secret", "Consumer secret", "password")}
       <div class="row-actions"><button type="button" class="btn" data-act="test-setting" data-kind="wp">آزمایش وردپرس</button><button type="button" class="btn" data-act="test-setting" data-kind="woo">آزمایش ووکامرس</button></div>
@@ -687,8 +805,8 @@ function productForm() {
   return `<form data-act="save-product"><h2 class="section-title">${product.id ? "ویرایش کالا" : "کالای جدید"}</h2>
     <input type="hidden" name="id" value="${product.id || ""}">
     <div class="field"><label>نام کالا</label><input name="name" value="${esc(product.name || "")}" required></div>
-    <div class="field"><label>قیمت فروش، تومان</label><input name="price" inputmode="decimal" required autocomplete="off" value="${price}"></div>
-    <div class="field"><label>موجودی</label><input name="stock" inputmode="numeric" autocomplete="off" value="${product.id ? product.stock : ""}"></div>
+    <div class="field"><label>قیمت فروش، تومان</label><input name="price" inputmode="decimal" required autocomplete="off" value="${price}" ${product.type === "variable" ? "readonly" : ""}></div>
+    ${product.type === "variable" ? `<p class="hint">موجودی و قیمت این کالا از متغیرهای ووکامرس می‌آید و با ویرایش اینجا عوض نمی‌شود.</p>${variationLines(product)}` : `<div class="field"><label>موجودی</label><input name="stock" inputmode="numeric" autocomplete="off" value="${product.id ? product.stock : ""}"></div>`}
     <div class="field"><label>بارکد</label><input class="ltr" name="barcode" autocomplete="off" value="${esc(product.barcode || "")}"></div>
     <div class="field"><label>شناسه کالا/خدمت مودیان</label><input class="ltr" name="tax_code" inputmode="numeric" autocomplete="off" placeholder="۱۳ رقم، اختیاری" value="${esc(product.tax_code || "")}"></div>
     <details ${product.id ? "open" : ""}>
@@ -706,21 +824,21 @@ function modalHtml() {
   if (!modal) return "";
   let inner = "";
   if (modal.type === "product") inner = productForm();
+  if (modal.type === "variations") {
+    const product = modal.product;
+    inner = `<h2 class="section-title">${esc(product.name)}</h2><p class="hint">نوع متغیر را انتخاب کنید. موجودی هر نوع جداست.</p><div class="var-pick">${(product.variations || []).map((item) => `<button type="button" class="btn var-choice" data-act="pick-variation" data-id="${product.id}" data-variation="${item.id}" ${item.in_stock ? "" : "disabled"}><span>${esc(item.label)}</span><span class="num">${item.tracked ? `موجودی ${num(item.stock)}` : (item.in_stock ? "موجود" : "ناموجود")}</span><span class="num">${money(item.price)}</span></button>`).join("")}</div>`;
+  }
   if (modal.type === "card") inner = `<h2 class="section-title">کارت‌خوان</h2><p>${esc(modal.message || "")}</p><div class="field"><label>شماره پیگیری رسید</label><input id="pos-ref" class="ltr"></div><button type="button" class="btn primary" data-act="confirm-card">ثبت پرداخت کارت</button>`;
   if (modal.type === "gateway") inner = `<h2 class="section-title">پرداخت درگاهی</h2><p>فاکتور ${num(modal.sale.id)} · ${money(modal.sale.payable)}</p>${modal.sale.pay_url ? `<p><a href="${esc(modal.sale.pay_url)}" target="_blank" rel="noopener">باز کردن صفحه درگاه</a></p>` : ""}<div class="row-actions"><button type="button" class="btn primary" data-act="verify-sale" data-id="${modal.sale.id}">استعلام تأیید</button><button type="button" class="btn danger" data-act="cancel-sale" data-id="${modal.sale.id}">لغو</button></div><form data-act="manual-gateway"><input type="hidden" name="id" value="${modal.sale.id}"><div class="field"><label>اگر در پنل درگاه پرداخت را دیدید، پیگیری را بنویسید</label><input name="ref" required></div><button class="btn" type="submit">ثبت دستی</button></form>`;
   if (modal.type === "license") {
     const lic = modal.license;
     inner = `<h2 class="section-title">پرداخت لایسنس در زیبال</h2><p>${esc(lic.title)} · ${esc(lic.buyer_name)} · ${money(lic.payable)}</p>${lic.pay_url ? `<p><a href="${esc(lic.pay_url)}" target="_blank" rel="noopener">باز کردن صفحه زیبال</a></p>` : ""}<div class="row-actions"><button type="button" class="btn primary" data-act="verify-license" data-id="${lic.id}">استعلام تأیید</button><button type="button" class="btn danger" data-act="cancel-license" data-id="${lic.id}">لغو</button></div><form data-act="manual-license"><input type="hidden" name="id" value="${lic.id}"><div class="field"><label>اگر در پنل زیبال پرداخت را دیدید، پیگیری را بنویسید</label><input name="ref" required></div><button class="btn" type="submit">ثبت دستی</button></form>`;
   }
-  if (modal.type === "receipt") {
-    const sale = modal.sale;
-    const moadianLabel = { skipped: "شناسه کالا ندارد", failed: "ارسال نشد", sent: "در صف سامانه", pending: "در حال بررسی", success: "تأیید شد" }[sale.moadian_status] || "";
-    inner = `<div id="print-area"><h2>دفترچی</h2><p>فاکتور ${num(sale.id)} · ${esc(sale.at_jalali)}</p><p>${esc(sale.customer_name || "")} ${esc(sale.customer_phone || "")}</p><table>${modal.items.map((item) => `<tr><td>${esc(item.name)} × ${num(item.qty)}</td><td class="num">${money(item.line_total)}</td></tr>`).join("")}</table><p>تخفیف ${money(sale.discount)}</p><p><strong>قابل پرداخت ${money(sale.payable)}</strong></p><p>${PAY[sale.payment_method] || ""}</p>${moadianLabel ? `<p>سامانه مودیان: ${esc(moadianLabel)}</p>` : ""}${sale.moadian_taxid ? `<p class="ltr">${esc(sale.moadian_taxid)}</p>` : ""}${modal.sms?.detail ? `<p>${esc(modal.sms.detail)}</p>` : ""}</div>${sale.moadian_error ? `<p class="hint">${esc(sale.moadian_error)}</p>` : ""}<div class="row-actions"><button type="button" class="btn" data-act="print">چاپ</button>${sale.moadian_status === "success" ? "" : `<button type="button" class="btn primary" data-act="moadian-send" data-id="${sale.id}">ارسال به سامانه مودیان</button>`}${sale.moadian_reference ? `<button type="button" class="btn" data-act="moadian-inquiry" data-id="${sale.id}">استعلام مودیان</button>` : ""}</div>`;
-  }
+  if (modal.type === "receipt") inner = receiptHtml(modal);
   if (modal.type === "password") inner = `<form data-act="change-password"><h2 class="section-title">تغییر رمز</h2><div class="field"><label>رمز فعلی</label><input type="password" name="current" required></div><div class="field"><label>رمز جدید</label><input type="password" name="password" minlength="6" required></div><button class="btn primary" type="submit">ذخیره</button></form>
     <form data-act="attach-email"><h2 class="section-title">ورود با جیمیل</h2><p class="hint">همین جیمیل را ذخیره کنید و بعد با آن وارد شوید.</p><div class="field"><label>جیمیل</label><input class="ltr" name="email" type="email" value="${esc(state.user.email || "")}" required placeholder="name@gmail.com"></div><button class="btn primary" type="submit">ذخیره جیمیل</button></form>
     <form data-act="verify-email"><div class="field"><label>کد ۶ رقمی جیمیل</label><input class="ltr" name="code" inputmode="numeric" required></div><button class="btn" type="submit">تأیید جیمیل</button></form>`;
-  return `<div class="modal-back" data-act="close-modal"><div class="modal card" data-act="stop"><div class="row-actions"><button type="button" class="btn" data-act="close-modal">بستن</button></div>${inner}</div></div>`;
+  return `<div class="modal-back" data-act="close-modal"><div class="modal card ${modal.type === "receipt" ? "invoice-modal" : ""}" data-act="stop"><div class="row-actions"><button type="button" class="btn" data-act="close-modal">بستن</button></div>${inner}</div></div>`;
 }
 
 function pageHtml() {
@@ -818,6 +936,7 @@ async function onSubmit(event) {
         state.user = result.user;
         state.mustChange = result.must_change_password;
         state.access = result.access || null;
+        state.shop = result.shop || null;
         hideToast();
         await navigate("dashboard");
       } catch (err) {
@@ -961,10 +1080,21 @@ async function saveProduct(form, data) {
 }
 async function saveSettings(form) {
   const data = Object.fromEntries(new FormData(form).entries());
+  const file = form.querySelector('input[name="logo_file"]')?.files?.[0];
+  if (file) {
+    const body = new FormData();
+    body.append("file", file);
+    const uploaded = await api("/api/upload", { method: "POST", form: body });
+    data.shop_logo = uploaded.url;
+  }
+  if (form.querySelector('[name="clear_shop_logo"]')?.checked) data.shop_logo = "";
+  delete data.logo_file;
+  delete data.clear_shop_logo;
   for (const key of ["gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock", "moadian_enabled", "moadian_sandbox"]) {
     data[key] = form.querySelector(`[name="${key}"]`)?.checked ? "1" : "0";
   }
   state.settings = (await api("/api/settings", { method: "PUT", body: data })).settings;
+  state.shop = { name: state.settings.shop_name || "دفترچی", logo: state.settings.shop_logo || "" };
   toast("تنظیمات ذخیره شد");
   render();
 }
@@ -1007,7 +1137,7 @@ async function submitSale(method, posRef) {
   const result = await api("/api/sales", {
     method: "POST",
     body: {
-      items: state.cart.map((line) => ({ product_id: line.id, qty: line.qty })),
+      items: state.cart.map((line) => ({ product_id: line.id, variation_id: line.variationId || 0, qty: line.qty })),
       discount_type: state.discountType,
       discount_value: state.discountType === "percent" ? Math.round(asInt(state.discountValue)) : asInt(state.discountValue),
       payment_method: method,
@@ -1072,13 +1202,16 @@ async function onClick(event) {
     } else if (act === "add-cart") {
       syncPos();
       addProduct(state.products.find((item) => item.id === Number(el.dataset.id)));
+    } else if (act === "pick-variation") {
+      const product = state.products.find((item) => item.id === Number(el.dataset.id)) || state.modal?.product;
+      addProduct(product, variationOf(product, el.dataset.variation));
     } else if (act === "inc" || act === "dec" || act === "remove-line") {
       syncPos();
-      const line = state.cart.find((item) => item.id === Number(el.dataset.id));
+      const line = state.cart.find((item) => item.id === Number(el.dataset.id) && (item.variationId || 0) === Number(el.dataset.variation || 0));
       if (!line) return;
       if (act === "remove-line") state.cart = state.cart.filter((item) => item !== line);
-      else if (act === "inc") {
-        if (line.qty + 1 > line.stock) return toast("موجودی کافی نیست");
+      else       if (act === "inc") {
+        if (line.tracked !== false && line.qty + 1 > line.stock) return toast("موجودی کافی نیست");
         line.qty += 1;
       } else line.qty -= 1;
       if (line.qty <= 0) state.cart = state.cart.filter((item) => item !== line);
@@ -1104,7 +1237,8 @@ async function onClick(event) {
     } else if (act === "woo-push" || act === "woo-push-ids") {
       const body = act === "woo-push-ids" ? { ids: state.importResult?.ids || [] } : {};
       const result = await api("/api/products/woo/push", { method: "POST", body });
-      toast(`ووکامرس: ${num(result.created)} جدید، ${num(result.updated)} به‌روز`);
+      const skipped = result.skipped ? `، ${num(result.skipped)} متغیر دست نخورد` : "";
+      toast(`ووکامرس: ${num(result.created)} جدید، ${num(result.updated)} به‌روز${skipped}`);
       await loaders.products();
       render();
     } else if (act === "woo-pull") {
@@ -1245,6 +1379,7 @@ api("/api/auth/me").then(async (me) => {
   state.user = me.user;
   state.mustChange = me.must_change_password;
   state.access = me.access || null;
+  state.shop = me.shop || null;
   await navigate(location.hash.replace("#", "") || "dashboard");
 }).catch((err) => {
   $app().innerHTML = `<p class="empty">${esc(err.message || "برنامه باز نشد")}</p>`;

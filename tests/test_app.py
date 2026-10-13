@@ -46,6 +46,19 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(data["debit_total"], data["credit_total"])
         return {row["code"]: row for row in data["accounts"]}
 
+    def test_shop_logo_is_saved_for_the_invoice(self):
+        logo = "/uploads/" + ("a" * 32) + ".png"
+        saved = self.client.put("/api/settings", json={"shop_name": "وب‌بیکری", "shop_logo": logo})
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        settings = saved.get_json()["settings"]
+        self.assertEqual(settings["shop_name"], "وب‌بیکری")
+        self.assertEqual(settings["shop_logo"], logo)
+        me = self.client.get("/api/auth/me").get_json()
+        self.assertEqual(me["shop"]["name"], "وب‌بیکری")
+        self.assertEqual(me["shop"]["logo"], logo)
+        rejected = self.client.put("/api/settings", json={"shop_logo": "javascript:alert(1)"})
+        self.assertEqual(rejected.status_code, 400, rejected.get_json())
+
     def test_login_and_health(self):
         health = self.client.get("/api/health")
         self.assertEqual(health.get_json()["name"], "دفترچی")
@@ -333,6 +346,155 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
 
+    def test_variable_woo_product_stays_one_product(self):
+        red = {
+            "id": 801, "status": "publish", "sku": "SHIRT-RED", "price": "180000",
+            "manage_stock": True, "stock_quantity": 3, "stock_status": "instock",
+            "attributes": [
+                {"id": 1, "name": "pa_color", "option": "قرمز"},
+                {"id": 2, "name": "pa_size", "option": "M"},
+            ],
+        }
+        blue = {
+            "id": 802, "status": "publish", "sku": "SHIRT-BLUE", "price": "210000",
+            "manage_stock": False, "stock_quantity": None, "stock_status": "instock",
+            "attributes": [
+                {"id": 1, "name": "رنگ", "option": "آبی"},
+                {"id": 2, "name": "سایز", "option": "L"},
+            ],
+        }
+        small = {
+            "id": 803, "status": "publish", "sku": "SHIRT-S", "price": "190000",
+            "manage_stock": True, "stock_quantity": 0, "stock_status": "outofstock",
+            "attributes": [{"id": 2, "name": "سایز", "option": "S"}],
+        }
+        parent = {
+            "id": 80, "name": "پیراهن", "type": "variable", "sku": "SHIRT",
+            "price": "180000", "regular_price": "", "manage_stock": False,
+            "attributes": [
+                {"id": 1, "name": "رنگ", "options": ["قرمز", "آبی"]},
+                {"id": 2, "name": "سایز", "options": ["S", "M", "L"]},
+            ],
+            "variations": [801, 802, 803],
+        }
+        simple = {
+            "id": 81, "name": "عسل", "type": "simple", "sku": "HONEY",
+            "regular_price": "20000", "stock_quantity": 4,
+        }
+        stray = {
+            "id": 801, "name": "پیراهن - قرمز", "type": "variation", "sku": "SHIRT-RED",
+            "regular_price": "180000", "stock_quantity": 3,
+        }
+        state = {"variations": [red, blue, small]}
+        pushed = {}
+
+        def fake_http(method, url, payload=None, headers=None, form=None, timeout=12):
+            if "/variations" in url:
+                return 200, state["variations"]
+            if "batch" in url:
+                pushed["body"] = payload
+                kind = "update" if payload.get("update") else "create"
+                return 200, {kind: [{"id": item.get("id") or 90, "name": item["name"]} for item in payload[kind]]}
+            if "/products?" in url:
+                return 200, [parent, simple, stray]
+            return 200, []
+
+        original = appmod.http_request
+        appmod.http_request = fake_http
+        try:
+            self.client.put("/api/settings", json={
+                "wp_url": "https://shop.example",
+                "woo_key": "ck",
+                "woo_secret": "cs",
+            })
+            pulled = self.client.post("/api/products/woo/pull", json={})
+            self.assertEqual(pulled.status_code, 200, pulled.get_json())
+            self.assertEqual(pulled.get_json()["imported"], 2)
+            products = self.client.get("/api/products").get_json()["products"]
+            self.assertEqual(sorted(item["name"] for item in products), ["عسل", "پیراهن"])
+            shirt = next(item for item in products if item["name"] == "پیراهن")
+            self.assertEqual(shirt["type"], "variable")
+            self.assertEqual(shirt["stock"], 3)
+            self.assertEqual(shirt["price"], 180000)
+            self.assertEqual(len(shirt["variations"]), 3)
+            labels = {item["label"]: item for item in shirt["variations"]}
+            self.assertEqual(labels["رنگ: قرمز · سایز: M"]["stock"], 3)
+            self.assertEqual(labels["رنگ: قرمز · سایز: M"]["sku"], "SHIRT-RED")
+            self.assertIsNone(labels["رنگ: آبی · سایز: L"]["stock"])
+            self.assertFalse(labels["رنگ: آبی · سایز: L"]["tracked"])
+            self.assertTrue(labels["رنگ: آبی · سایز: L"]["in_stock"])
+            self.assertEqual(labels["سایز: S"]["stock"], 0)
+            self.assertFalse(labels["سایز: S"]["in_stock"])
+            found = self.client.get("/api/products?q=SHIRT-BLUE").get_json()["products"]
+            self.assertEqual(len(found), 1)
+            self.assertEqual(found[0]["name"], "پیراهن")
+            self.open_register(0)
+            buyer = {"customer_first": "نگار", "customer_last": "موسوی", "customer_phone": "09125556677"}
+            missing = self.client.post("/api/sales", json={
+                "items": [{"product_id": shirt["id"], "qty": 1}],
+                "payment_method": "cash",
+                **buyer,
+            })
+            self.assertEqual(missing.status_code, 400, missing.get_json())
+            self.assertIn("نوع متغیر", missing.get_json()["error"])
+            red_id = labels["رنگ: قرمز · سایز: M"]["id"]
+            sold = self.client.post("/api/sales", json={
+                "items": [{"product_id": shirt["id"], "variation_id": red_id, "qty": 2}],
+                "payment_method": "cash",
+                **buyer,
+            })
+            self.assertEqual(sold.status_code, 200, sold.get_json())
+            self.assertEqual(sold.get_json()["items"][0]["name"], "پیراهن — رنگ: قرمز · سایز: M")
+            self.assertEqual(sold.get_json()["items"][0]["unit_price"], 180000)
+            fresh = next(item for item in self.client.get("/api/products").get_json()["products"] if item["id"] == shirt["id"])
+            red_now = next(item for item in fresh["variations"] if item["id"] == red_id)
+            self.assertEqual(red_now["stock"], 1)
+            self.assertEqual(fresh["stock"], 1)
+            blocked = self.client.post("/api/sales", json={
+                "items": [{"product_id": shirt["id"], "variation_id": labels["سایز: S"]["id"], "qty": 1}],
+                "payment_method": "cash",
+                **buyer,
+            })
+            self.assertEqual(blocked.status_code, 400, blocked.get_json())
+            blue_id = labels["رنگ: آبی · سایز: L"]["id"]
+            open_stock = self.client.post("/api/sales", json={
+                "items": [{"product_id": shirt["id"], "variation_id": blue_id, "qty": 1}],
+                "payment_method": "cash",
+                **buyer,
+            })
+            self.assertEqual(open_stock.status_code, 200, open_stock.get_json())
+            after_open = next(item for item in self.client.get("/api/products").get_json()["products"] if item["id"] == shirt["id"])
+            self.assertEqual(after_open["stock"], 1)
+            self.assertIsNone(next(item for item in after_open["variations"] if item["id"] == blue_id)["stock"])
+            state["variations"] = [{**red, "stock_quantity": 5}]
+            again = self.client.post("/api/products/woo/pull", json={})
+            self.assertEqual(again.status_code, 200, again.get_json())
+            self.assertEqual(again.get_json()["updated"], 2)
+            latest = next(item for item in self.client.get("/api/products").get_json()["products"] if item["id"] == shirt["id"])
+            self.assertEqual(len(latest["variations"]), 1)
+            self.assertEqual(latest["variations"][0]["label"], "رنگ: قرمز · سایز: M")
+            self.assertEqual(latest["variations"][0]["stock"], 5)
+            self.assertEqual(latest["stock"], 5)
+            adjusted = self.client.post("/api/inventory/adjust", json={
+                "product_id": f"{shirt['id']}:{latest['variations'][0]['id']}",
+                "stock": 9,
+            })
+            self.assertEqual(adjusted.status_code, 200, adjusted.get_json())
+            counted = next(item for item in self.client.get("/api/products").get_json()["products"] if item["id"] == shirt["id"])
+            self.assertEqual(counted["variations"][0]["stock"], 9)
+            self.assertEqual(counted["stock"], 9)
+            parent_only = self.client.post("/api/inventory/adjust", json={"product_id": shirt["id"], "stock": 1})
+            self.assertEqual(parent_only.status_code, 400, parent_only.get_json())
+            sent = self.client.post("/api/products/woo/push", json={})
+            self.assertEqual(sent.status_code, 200, sent.get_json())
+            self.assertEqual(sent.get_json()["skipped"], 1)
+            self.assertEqual(sent.get_json()["updated"], 1)
+            self.assertEqual(pushed["body"]["update"][0]["name"], "عسل")
+            self.assertEqual(pushed["body"]["update"][0]["type"], "simple")
+            self.assertNotIn("create", pushed["body"])
+        finally:
+            appmod.http_request = original
+
     def test_license_pays_through_zibal(self):
         calls = []
 
@@ -585,7 +747,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.0.8")
+        self.assertEqual(appmod.APP_VERSION, "1.0.10")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -610,7 +772,11 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
-        self.assertIn("1.0.8", run)
+        self.assertIn("1.0.10", run)
+        self.assertIn("invoice-edge", script)
+        self.assertIn("نوع متغیر را انتخاب کنید", script)
+        self.assertIn("var-line", script)
+        self.assertIn("لوگوی سایت", script)
         self.assertIn("buyer-first", script)
         self.assertIn("خرید حضوری بدون نام", script)
         self.assertIn("ارسال به سامانه مودیان", script)
@@ -626,7 +792,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.0.8")
+        self.assertEqual(boot["version"], "1.0.10")
         pay = Path("/workspace/site-updates/daftarchi/pay.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-pay", pay)
         self.assertIn("gateway.zibal.ir/v1/request", pay)
