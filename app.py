@@ -95,13 +95,15 @@ DEFAULT_SETTINGS = {
     "moadian_sandbox": "1",
     "shop_name": "دفترچی",
     "shop_logo": "",
+    "telegram_bot_token": "",
+    "telegram_chat_id": "",
 }
 POS_PROVIDERS = {"manual", "saman", "behpardakht", "parsian", "irankish", "sepehr", "asanpardakht"}
 GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.15"
+APP_VERSION = "1.1.0"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -121,6 +123,11 @@ HOST_PAY_URLS = (
     "https://webakery.ir/pay.php",
 )
 HOST_MAIL_KEY = "daftarchi-webakery-mail"
+HOST_TELEGRAM_URLS = (
+    "https://webakery.ir/daftarchi/telegram.php",
+    "https://webakery.ir/license-server/telegram.php",
+    "https://webakery.ir/telegram.php",
+)
 SMS_PROVIDERS = {"internal", "kavenegar", "melipayamak"}
 BOOL_KEYS = {"gateway_sandbox", "sms_on_close", "sms_on_sale", "sms_low_stock", "moadian_enabled", "moadian_sandbox"}
 SYSTEM_ACCOUNTS = [
@@ -1777,6 +1784,16 @@ def save_settings(conn, payload: dict):
         elif key == "shop_logo":
             text = str(value or "").strip()
             stored = clean_image(text) if text else ""
+        elif key == "telegram_bot_token":
+            stored = str(value or "").strip()
+            if not stored:
+                continue
+            if not re.fullmatch(r"\d{6,15}:[A-Za-z0-9_-]{20,}", stored):
+                raise AppError("توکن ربات تلگرام معتبر نیست")
+        elif key == "telegram_chat_id":
+            stored = str(value or "").translate(DIGITS).replace(" ", "")
+            if stored and not re.fullmatch(r"-?\d{1,20}", stored):
+                raise AppError("شناسه چت تلگرام عدد است")
         elif key == "moadian_vat":
             stored = str(parse_money(value or "10", "نرخ مالیات", allow_empty=True))
             if int(stored) > 100:
@@ -1987,6 +2004,18 @@ def init_db():
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS support_messages (
+              id INTEGER PRIMARY KEY,
+              kind TEXT NOT NULL,
+              body TEXT NOT NULL,
+              page TEXT,
+              app_version TEXT,
+              error TEXT,
+              delivery TEXT,
+              detail TEXT,
+              user_id INTEGER,
+              created_at TEXT NOT NULL
+            );
             CREATE INDEX IF NOT EXISTS idx_sales_created ON sales(created_at);
             CREATE INDEX IF NOT EXISTS idx_sales_session ON sales(session_id);
             CREATE INDEX IF NOT EXISTS idx_products_barcode ON products(barcode);
@@ -2150,6 +2179,78 @@ def update_info():
         notes=notes,
         manifest=manifest,
     )
+
+
+def telegram_text(user, kind: str, body: str, page: str, error: str, settings: dict) -> str:
+    shop = settings.get("shop_name") or "دفترچی"
+    lines = [
+        f"دفترچی {APP_VERSION}",
+        f"فروشگاه: {shop}",
+        f"کاربر: {user['name']}",
+        f"نوع: {'گزارش خطا' if kind == 'bug' else 'چت'}",
+        f"صفحه: {page or '—'}",
+        body,
+    ]
+    if error:
+        lines.append(f"آخرین خطا: {error}")
+    return "\n".join(lines)[:3500]
+
+
+def deliver_telegram(settings: dict, text: str) -> tuple[str, str]:
+    token = (settings.get("telegram_bot_token") or "").strip()
+    chat = (settings.get("telegram_chat_id") or "").strip()
+    if re.fullmatch(r"\d{6,15}:[A-Za-z0-9_-]{20,}", token) and re.fullmatch(r"-?\d{1,20}", chat):
+        try:
+            status, body = http_request(
+                "POST",
+                f"https://api.telegram.org/bot{token}/sendMessage",
+                {"chat_id": chat, "text": text},
+                timeout=8,
+            )
+        except AppError as exc:
+            return "stored", str(exc)
+        if status < 400 and isinstance(body, dict) and body.get("ok"):
+            return "telegram", "به تلگرام فرستاده شد"
+        description = str(body.get("description") or "") if isinstance(body, dict) else ""
+        return "stored", (description or "تلگرام پیام را نپذیرفت. توکن و شناسه چت را در تنظیمات بررسی کنید.")[:180]
+    for url in HOST_TELEGRAM_URLS:
+        try:
+            status, body = http_request("POST", url, {"key": HOST_MAIL_KEY, "text": text}, timeout=6)
+        except AppError:
+            continue
+        if status < 400 and isinstance(body, dict) and body.get("ok"):
+            return "host", "از هاست به تلگرام فرستاده شد"
+    return "stored", "پیام در دفترچی ماند. توکن ربات و شناسه چت را در تنظیمات بگذارید، یا telegram.php را روی هاست بگذارید."
+
+
+@app.get("/api/support/messages")
+def support_messages():
+    require_user()
+    with connect() as conn:
+        rows = conn.execute(
+            "SELECT id, kind, body, page, error, delivery, detail, created_at FROM support_messages ORDER BY id DESC LIMIT 40"
+        ).fetchall()
+    return jsonify(messages=[dict(row) for row in reversed(rows)])
+
+
+@app.post("/api/support/messages")
+def support_send():
+    user = require_user()
+    payload = body_json()
+    kind = payload.get("kind") if payload.get("kind") in {"chat", "bug"} else "chat"
+    body = clean_text(payload.get("body"), "متن", 1000, required=True)
+    page = clean_text(payload.get("page"), "صفحه", 40)
+    error = clean_text(payload.get("error"), "خطا", 300)
+    with connect() as conn:
+        settings = get_settings(conn)
+        delivery, detail = deliver_telegram(settings, telegram_text(user, kind, body, page, error, settings))
+        cur = conn.execute(
+            """INSERT INTO support_messages (kind, body, page, app_version, error, delivery, detail, user_id, created_at)
+               VALUES (?,?,?,?,?,?,?,?,?)""",
+            (kind, body, page, APP_VERSION, error, delivery, detail, user["id"], iso()),
+        )
+        message_id = cur.lastrowid
+    return jsonify(ok=True, id=message_id, sent=delivery in {"telegram", "host"}, delivery=delivery, detail=detail)
 
 
 def shop_profile(conn) -> dict:
@@ -3871,6 +3972,8 @@ def public_settings(data: dict) -> dict:
     out.pop("must_change_password", None)
     out["moadian_key_saved"] = "1" if out.get("moadian_private_key") else "0"
     out["moadian_private_key"] = ""
+    out["telegram_token_saved"] = "1" if out.get("telegram_bot_token") else "0"
+    out["telegram_bot_token"] = ""
     return out
 
 

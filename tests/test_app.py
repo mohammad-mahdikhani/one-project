@@ -342,6 +342,60 @@ class DaftarchiTest(unittest.TestCase):
         shirts = [item for item in products if item["name"] == "پیراهن"]
         self.assertEqual(sorted(item["sku"] for item in shirts), ["P1", "P2"])
 
+    def test_support_message_reaches_telegram_without_showing_the_token(self):
+        token = "123456789:AAHxxxxxxxxxxxxxxxxxxxx"
+        rejected = self.client.put("/api/settings", json={"telegram_bot_token": "nope"})
+        self.assertEqual(rejected.status_code, 400)
+        saved = self.client.put("/api/settings", json={"telegram_bot_token": token, "telegram_chat_id": "۵۵۰۰۱"})
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        shown = saved.get_json()["settings"]
+        self.assertEqual(shown["telegram_bot_token"], "")
+        self.assertEqual(shown["telegram_token_saved"], "1")
+        self.assertEqual(shown["telegram_chat_id"], "55001")
+        kept = self.client.put("/api/settings", json={"shop_name": "فروشگاه آزمایش"})
+        self.assertEqual(kept.get_json()["settings"]["telegram_token_saved"], "1")
+        seen = {}
+
+        def deliver(method, url, payload=None, headers=None, form=None, timeout=12):
+            seen["url"] = url
+            seen["text"] = (payload or {}).get("text")
+            seen["chat"] = (payload or {}).get("chat_id")
+            return 200, {"ok": True, "result": {"message_id": 9}}
+
+        original = appmod.http_request
+        appmod.http_request = deliver
+        try:
+            sent = self.client.post("/api/support/messages", json={
+                "kind": "bug", "body": "صندوق بسته ماند", "page": "pos", "error": "صندوق بسته است",
+            })
+        finally:
+            appmod.http_request = original
+        self.assertEqual(sent.status_code, 200, sent.get_json())
+        self.assertTrue(sent.get_json()["sent"])
+        self.assertIn("api.telegram.org/bot" + token + "/sendMessage", seen["url"])
+        self.assertEqual(seen["chat"], "55001")
+        self.assertIn("صندوق بسته ماند", seen["text"])
+        self.assertIn("1.1.0", seen["text"])
+        listed = self.client.get("/api/support/messages").get_json()["messages"]
+        self.assertEqual(listed[-1]["body"], "صندوق بسته ماند")
+        self.assertEqual(listed[-1]["delivery"], "telegram")
+        appmod.http_request = lambda *args, **kwargs: (_ for _ in ()).throw(appmod.AppError("اتصال برقرار نشد", 502))
+        try:
+            self.client.put("/api/settings", json={"telegram_bot_token": "", "telegram_chat_id": ""})
+        finally:
+            appmod.http_request = original
+        # Empty token is ignored, so clear the chat id only and replace the token by storing a space-skipped value.
+        with appmod.connect() as conn:
+            conn.execute("DELETE FROM settings WHERE key IN ('telegram_bot_token', 'telegram_chat_id')")
+        appmod.http_request = lambda *args, **kwargs: (_ for _ in ()).throw(appmod.AppError("اتصال برقرار نشد", 502))
+        try:
+            kept_local = self.client.post("/api/support/messages", json={"kind": "chat", "body": "کسی جواب نمی‌دهد"})
+        finally:
+            appmod.http_request = original
+        self.assertEqual(kept_local.status_code, 200, kept_local.get_json())
+        self.assertFalse(kept_local.get_json()["sent"])
+        self.assertIn("توکن", kept_local.get_json()["detail"])
+
     def test_password_reset_and_cashier(self):
         forgot = self.client.post("/api/auth/forgot", json={"ident": "09120000000"})
         self.assertEqual(forgot.status_code, 200, forgot.get_json())
@@ -914,7 +968,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.0.15")
+        self.assertEqual(appmod.APP_VERSION, "1.1.0")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -939,7 +993,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
-        self.assertIn("1.0.15", run)
+        self.assertIn("1.1.0", run)
         self.assertIn("invoice-edge", script)
         self.assertIn("نوع متغیر را انتخاب کنید", script)
         self.assertIn("همین مقدارهای نوشته‌شده", script)
@@ -949,6 +1003,9 @@ class DaftarchiTest(unittest.TestCase):
         self.assertIn("data-act=\"commit-import\"", script)
         self.assertIn("نام کالا", script)
         self.assertIn("با نام یا کد قبلی", script)
+        self.assertIn("ارسال به تلگرام", script)
+        self.assertIn("گزارش این خطا", script)
+        self.assertIn("data-act=\"check-update\"", script)
         page = Path("/workspace/templates/index.html").read_text(encoding="utf-8")
         self.assertIn("/manifest.webmanifest", page)
         self.assertIn("/sw.js", page)
@@ -969,7 +1026,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.0.15")
+        self.assertEqual(boot["version"], "1.1.0")
         home = self.client.get("/")
         self.assertIn("manifest.webmanifest", home.get_data(as_text=True))
         manifest = json.loads(self.client.get("/manifest.webmanifest").get_data(as_text=True))
@@ -978,7 +1035,10 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(manifest["name"], "دفترچی")
         worker = self.client.get("/sw.js")
         self.assertEqual(worker.status_code, 200)
-        self.assertIn("daftarchi-1.0.15", worker.get_data(as_text=True))
+        self.assertIn("daftarchi-1.1.0", worker.get_data(as_text=True))
+        relay = Path("/workspace/site-updates/daftarchi/telegram.php").read_text(encoding="utf-8")
+        self.assertIn("daftarchi-telegram", relay)
+        self.assertIn("telegram.json", relay)
         pay = Path("/workspace/site-updates/daftarchi/pay.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-pay", pay)
         self.assertIn("gateway.zibal.ir/v1/request", pay)

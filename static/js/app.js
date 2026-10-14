@@ -62,6 +62,10 @@ const state = {
   users: [],
   importResult: null,
   importFile: null,
+  support: false,
+  supportTab: "chat",
+  supportLog: [],
+  lastError: "",
 };
 
 const $app = () => document.getElementById("app");
@@ -95,17 +99,32 @@ function thumb(src, alt, small) {
   if (!safe) return `<span class="ph ${small ? "sm" : ""}"></span>`;
   return `<img class="${small ? "thumb sm" : ""}" src="${esc(safe)}" alt="${esc(alt || "")}">`;
 }
-function toast(message) {
+function remedyFor(message) {
+  const text = String(message || "");
+  if (text.includes("قطع شد")) return "دفترچی را ببندید و دوباره باز کنید. اگر فروش ثبت شده، همان فاکتور را دوباره نزنید.";
+  if (text.includes("ستون نام") || text.includes("نام کالا")) return "ردیف اول اکسل باید نام کالا و قیمت فروش باشد. شناسه اگر نیست، همان نام کالا کافی است.";
+  if (text.includes("Consumer") || text.includes("ووکامرس") || text.includes("کلید مصرف")) return "در تنظیمات، کلید ووکامرس را با ck_ بچسبانید و دسترسی را خواندن و نوشتن بگذارید.";
+  if (text.includes("صندوق")) return "از زبانه صندوق، صندوق را باز کنید و فروش را دوباره بزنید.";
+  if (text.includes("وارد نشده")) return "یک بار خارج شوید و دوباره وارد شوید.";
+  if (text.includes("توکن") || text.includes("تلگرام") || text.includes("شناسه چت")) return "در تنظیمات، توکن ربات تلگرام و شناسه چت را ذخیره کنید.";
+  return "اگر دوباره پیش آمد، گزارش خطا را بزنید تا متن برای پشتیبانی تلگرام برود.";
+}
+function toast(message, options) {
   let el = document.getElementById("toast");
   if (!el) {
     el = document.createElement("div");
     el.id = "toast";
     document.body.appendChild(el);
   }
-  el.textContent = message;
+  const problem = Boolean(options && options.error);
+  if (problem) state.lastError = String(message || "");
+  const report = problem && state.user ? `<button type="button" class="btn" data-act="report-error">گزارش این خطا</button>` : "";
+  el.innerHTML = problem
+    ? `<p>${esc(message)}</p><p class="toast-remedy">${esc(remedyFor(message))}</p>${report}`
+    : esc(message);
   el.classList.add("show");
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => el.classList.remove("show"), 8000);
+  toast.timer = setTimeout(() => el.classList.remove("show"), problem ? 12000 : 8000);
 }
 function hideToast() {
   const el = document.getElementById("toast");
@@ -165,7 +184,7 @@ async function guard(fn) {
       state.authError = message;
       render();
     }
-    toast(message);
+    toast(message, { error: true });
   }
   finally { state.busy = false; }
 }
@@ -337,6 +356,21 @@ function updateBanner() {
     ${state.update.notes ? `<div class="hint">${esc(state.update.notes)}</div>` : ""}
   </div>`;
 }
+function supportHtml() {
+  const update = state.update;
+  const fresh = update?.update;
+  const log = state.supportLog || [];
+  const bubbles = log.length
+    ? log.map((item) => `<article class="bubble ${item.kind === "bug" ? "bug" : ""}"><strong>${item.kind === "bug" ? "گزارش خطا" : "چت"}</strong><p>${esc(item.body)}</p>${item.detail ? `<p class="toast-remedy">${esc(item.detail)}</p>` : ""}</article>`).join("")
+    : `<p class="empty">هنوز پیامی نیست.</p>`;
+  const panel = state.supportTab === "bug"
+    ? `<form data-act="send-support"><input type="hidden" name="kind" value="bug"><div class="field"><label>چه اتفاقی افتاد؟</label><textarea name="body" required rows="4">${esc(state.lastError || "")}</textarea></div><button class="btn primary" type="submit">ارسال گزارش</button></form>`
+    : state.supportTab === "update"
+      ? `<div class="stats update-stats"><div class="stat"><small>نسخه شما</small><strong class="num">${esc(update?.current || "")}</strong></div><div class="stat"><small>نسخه انتشار</small><strong class="num">${esc(fresh ? update.version : (update?.current || ""))}</strong></div></div><p>${fresh ? `نسخه ${esc(update.version)} آماده است. فایل را دانلود کنید و روی همین دفترچی اجرا کنید. فروش و حساب‌ها می‌مانند.` : "همین نسخه برای انتشار است. فروش و حساب‌ها با به‌روزرسانی پاک نمی‌شوند."}</p>${update?.notes ? `<p class="hint">${esc(update.notes)}</p>` : ""}${fresh ? `<a class="btn primary" href="${esc(update.url)}" target="_blank" rel="noopener">دانلود نسخه تازه</a>` : ""}<button type="button" class="btn" data-act="check-update">بررسی دوباره</button>`
+      : `<div class="chat-log">${bubbles}</div><form data-act="send-support"><input type="hidden" name="kind" value="chat"><div class="field"><label>پیام</label><textarea name="body" required rows="3" placeholder="برای پشتیبانی بنویسید"></textarea></div><button class="btn primary" type="submit">ارسال به تلگرام</button></form>`;
+  const sheet = state.support ? `<section class="support-sheet" data-act="stop"><div class="row-actions"><strong>پشتیبانی دفترچی</strong><button type="button" class="btn" data-act="toggle-support">بستن</button></div><div class="seg">${[["chat", "چت"], ["bug", "گزارش خطا"], ["update", "به‌روزرسانی"]].map(([id, label]) => `<button type="button" class="${state.supportTab === id ? "on" : ""}" data-act="support-tab" data-tab="${id}">${label}</button>`).join("")}</div>${panel}</section>` : "";
+  return `${sheet}<button type="button" class="dock" data-act="toggle-support">${state.support ? "بستن پشتیبانی" : "پشتیبانی"}</button>`;
+}
 function authProblem() {
   if (!state.authError) return "";
   return `<p class="form-error">${esc(state.authError)}</p>`;
@@ -477,6 +511,7 @@ function webShell() {
     <div id="banner-host"></div>
     <main class="stage" id="view"></main>
     <div id="more-host"></div>
+    <div id="support-host"></div>
     <div id="modal-host"></div>
   </div>`;
 }
@@ -516,6 +551,8 @@ function paintChrome() {
   }
   const modal = document.getElementById("modal-host");
   if (modal) modal.innerHTML = modalHtml();
+  const support = document.getElementById("support-host");
+  if (support) support.innerHTML = supportHtml();
 }
 
 function bars(summary) {
@@ -763,7 +800,7 @@ function options(pairs, current) {
 }
 function field(key, label, type = "text", placeholder = "") {
   const hold = placeholder ? ` placeholder="${esc(placeholder)}"` : "";
-  return `<div class="field"><label>${label}</label><input name="${key}" type="${type}" value="${esc(state.settings[key] || "")}"${hold} ${type === "text" && /url|host|phone|sender|key|user|merchant|callback/.test(key) ? `class="ltr"` : ""}></div>`;
+  return `<div class="field"><label>${label}</label><input name="${key}" type="${type}" value="${esc(state.settings[key] || "")}"${hold} ${type === "text" && /url|host|phone|sender|key|user|merchant|callback|chat/.test(key) ? `class="ltr"` : ""}></div>`;
 }
 function settingsHtml() {
   const s = state.settings;
@@ -819,6 +856,11 @@ function settingsHtml() {
     <section class="card"><h2 class="section-title">جیمیل حساب کاربری</h2>
       <button type="button" class="btn" data-act="test-setting" data-kind="email">آزمایش هاست جیمیل</button>
       <p class="hint">کد تأیید و بازیابی رمز از هاست وب‌بیکری به جیمیل می‌رود. فایل mail.php باید در public_html/daftarchi باشد. رمز ورود جیمیل روی این رایانه لازم نیست.</p>
+    </section>
+    <section class="card"><h2 class="section-title">پشتیبانی تلگرام</h2>
+      ${field("telegram_bot_token", "توکن ربات", "password", s.telegram_token_saved === "1" ? "توکن ذخیره شده است" : "123456:ABC...")}
+      ${field("telegram_chat_id", "شناسه چت", "text", "عدد چت یا کانال")}
+      <p class="hint">ربات را در تلگرام با BotFather بسازید و توکن را اینجا بگذارید. شناسه چت همان عددی است که پیام‌ها باید به آن برسد. اگر این رایانه به تلگرام نرسد، فایل telegram.php و telegram.json را کنار version.json روی هاست بگذارید.</p>
     </section>
     <section class="card"><h2 class="section-title">جای فایل‌های آپدیت</h2>
       <p class="hint">نسخه نصب‌شده: ${esc(state.update?.current || "")}. دفترچی این آدرس را می‌خواند:</p>
@@ -1025,6 +1067,17 @@ async function onSubmit(event) {
         hideToast();
         await navigate("dashboard");
       }
+    } else if (act === "send-support") {
+      const result = await api("/api/support/messages", { method: "POST", body: {
+        kind: data.kind === "bug" ? "bug" : "chat",
+        body: data.body,
+        page: state.page,
+        error: state.lastError || "",
+      } });
+      state.supportLog = (await api("/api/support/messages")).messages;
+      state.support = true;
+      toast(result.detail || "پیام ثبت شد");
+      paintChrome();
     } else if (act === "verify") {
       await api("/api/auth/verify", { method: "POST", body: { ident: data.ident, code: data.code } });
       state.authView = "login";
@@ -1253,6 +1306,21 @@ async function onClick(event) {
   }
   if (act === "print") { window.print(); return; }
   if (act === "password-modal") { state.modal = { type: "password" }; render(); return; }
+  if (act === "toggle-support" || act === "report-error" || act === "support-tab") {
+    if (act === "toggle-support" && state.support && !el.dataset.tab) {
+      state.support = false;
+      paintChrome();
+      return;
+    }
+    await guard(async () => {
+      state.support = true;
+      if (act === "report-error") state.supportTab = "bug";
+      if (el.dataset.tab) state.supportTab = el.dataset.tab;
+      state.supportLog = (await api("/api/support/messages")).messages;
+      paintChrome();
+    });
+    return;
+  }
   if (act === "open-import") { state.modal = { type: "import", name: "", preview: null }; render(); return; }
   await guard(async () => {
     if (act === "logout") {
@@ -1289,6 +1357,12 @@ async function onClick(event) {
       } else await submitSale(el.dataset.method, "");
     } else if (act === "confirm-card") {
       await submitSale("card", document.getElementById("pos-ref")?.value || "");
+    } else if (act === "check-update") {
+      await loadUpdate();
+      state.support = true;
+      state.supportTab = "update";
+      toast(state.update?.update ? `نسخه ${state.update.version} آماده است` : "نسخه تازه‌ای نیست");
+      paintChrome();
     } else if (act === "commit-import") {
       if (!state.importFile || !state.modal?.preview?.total) return toast("اول فایل اکسل را انتخاب کنید");
       const body = new FormData();
@@ -1448,6 +1522,14 @@ document.addEventListener("submit", onSubmit);
 document.addEventListener("click", onClick);
 document.addEventListener("input", onInput);
 document.addEventListener("change", onChange);
+window.addEventListener("error", (event) => {
+  if (!event.message || event.message === "Script error.") return;
+  toast(event.message, { error: true });
+});
+window.addEventListener("unhandledrejection", (event) => {
+  const message = event.reason && event.reason.message ? event.reason.message : "";
+  if (message) toast(message, { error: true });
+});
 window.addEventListener("hashchange", () => {
   const page = location.hash.replace("#", "");
   if (state.user && page && page !== state.page) guard(() => navigate(page));

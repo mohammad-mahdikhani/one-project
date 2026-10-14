@@ -257,7 +257,10 @@ tr.selected { background: var(--soft); }
   padding: 12px 14px; white-space: normal; overflow-wrap: anywhere;
   opacity: 0; pointer-events: none; transition: opacity 0.2s;
 }
-#toast.show { opacity: 1; }
+#toast.show { opacity: 1; pointer-events: auto; }
+#toast p { margin: 0; }
+.toast-remedy { color: #e7e1d6; font-size: 13px; margin-top: 6px; }
+#toast .btn { margin-top: 8px; background: white; color: var(--ink); }
 details { border-top: 1px solid var(--line); padding-top: 10px; margin-top: 10px; }
 summary { cursor: pointer; font-weight: 600; }
 .section-title { font-size: 15px; margin: 8px 0; }
@@ -323,6 +326,35 @@ summary { cursor: pointer; font-weight: 600; }
   .side-foot { display: none; }
   .main { padding: 16px; }
 }
+.dock {
+  position: fixed; z-index: 12;
+  bottom: 18px; inset-inline-start: 16px;
+  background: var(--accent); color: white; border: 0; border-radius: 999px;
+  padding: 10px 16px; font-weight: 600; box-shadow: var(--shadow);
+}
+.support-sheet {
+  position: fixed; z-index: 13;
+  bottom: 72px; inset-inline-start: 16px;
+  width: min(420px, calc(100% - 32px));
+  max-height: min(70vh, 560px); overflow: auto;
+  background: var(--paper); border: 1px solid var(--line);
+  border-radius: 20px; box-shadow: 0 18px 50px rgba(28, 25, 21, 0.16);
+  padding: 14px; display: grid; gap: 10px;
+}
+.seg { display: flex; gap: 4px; background: var(--bg); border-radius: 12px; padding: 4px; }
+.seg button { flex: 1; border: 0; background: transparent; border-radius: 10px; padding: 8px; color: var(--muted); }
+.seg button.on { background: var(--paper); color: var(--accent-ink); font-weight: 600; }
+.chat-log { display: grid; gap: 8px; max-height: 240px; overflow: auto; }
+.bubble { background: var(--soft); border-radius: 14px; padding: 8px 10px; }
+.bubble.bug { background: #fff1f2; }
+.bubble p { margin: 0; }
+.update-stats { grid-template-columns: 1fr 1fr; }
+@media (max-width: 860px) {
+  .dock { bottom: calc(74px + env(safe-area-inset-bottom)); }
+  .support-sheet { bottom: calc(128px + env(safe-area-inset-bottom)); inset-inline-start: 12px; width: auto; inset-inline-end: 12px; }
+  #toast { bottom: calc(132px + env(safe-area-inset-bottom)); }
+}
+
 @media print {
   body * { visibility: hidden; }
   #print-area, #print-area * { visibility: visible; }

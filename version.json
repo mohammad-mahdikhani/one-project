@@ -1,5 +1,5 @@
 {
-  "version": "1.0.15",
+  "version": "1.1.0",
   "url": "https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi.exe",
-  "notes": "اگر کالا شناسه نداشته باشد، ورود اکسل با نام کالا همان کالا را به‌روز می‌کند."
+  "notes": "نسخه انتشار دفترچی. پوسته جاوااسکریپت روی موبایل و دسکتاپ، گزارش خطا، چت تلگرام و به‌روزرسانی داخل برنامه."
 }
