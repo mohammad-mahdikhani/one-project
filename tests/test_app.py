@@ -1,4 +1,5 @@
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -821,7 +822,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.0.12")
+        self.assertEqual(appmod.APP_VERSION, "1.0.13")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -846,11 +847,16 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
-        self.assertIn("1.0.12", run)
+        self.assertIn("1.0.13", run)
         self.assertIn("invoice-edge", script)
         self.assertIn("نوع متغیر را انتخاب کنید", script)
         self.assertIn("همین مقدارهای نوشته‌شده", script)
         self.assertIn("کادر Consumer key خالی است", script)
+        self.assertIn("class=\"webapp\"", script)
+        self.assertIn("data-act=\"more\"", script)
+        page = Path("/workspace/templates/index.html").read_text(encoding="utf-8")
+        self.assertIn("/manifest.webmanifest", page)
+        self.assertIn("/sw.js", page)
         self.assertIn("var-line", script)
         self.assertIn("لوگوی سایت", script)
         self.assertIn("buyer-first", script)
@@ -868,7 +874,16 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.0.12")
+        self.assertEqual(boot["version"], "1.0.13")
+        home = self.client.get("/")
+        self.assertIn("manifest.webmanifest", home.get_data(as_text=True))
+        manifest = json.loads(self.client.get("/manifest.webmanifest").get_data(as_text=True))
+        self.assertEqual(manifest["display"], "standalone")
+        self.assertEqual(manifest["dir"], "rtl")
+        self.assertEqual(manifest["name"], "دفترچی")
+        worker = self.client.get("/sw.js")
+        self.assertEqual(worker.status_code, 200)
+        self.assertIn("daftarchi-1.0.13", worker.get_data(as_text=True))
         pay = Path("/workspace/site-updates/daftarchi/pay.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-pay", pay)
         self.assertIn("gateway.zibal.ir/v1/request", pay)

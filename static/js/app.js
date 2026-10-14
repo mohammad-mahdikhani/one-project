@@ -1,15 +1,18 @@
-const NAV = [
-  ["dashboard", "پیشخوان"],
+const PRIMARY = [
   ["pos", "فروش"],
-  ["products", "محصولات", "admin"],
+  ["dashboard", "پیشخوان"],
+  ["products", "کالا", "admin"],
+  ["register", "صندوق"],
+];
+const MORE = [
   ["inventory", "انبار", "admin"],
   ["accounts", "حسابداری", "admin"],
-  ["register", "صندوق"],
-  ["licenses", "لایسنس اپ", "admin"],
   ["customers", "مشتریان"],
+  ["licenses", "لایسنس", "admin"],
   ["sms", "پیامک", "admin"],
   ["settings", "تنظیمات", "admin"],
 ];
+const NAV = [...PRIMARY, ...MORE];
 const TITLES = Object.fromEntries(NAV.map(([id, title]) => [id, title]));
 const PAY = { cash: "نقد", card: "کارت", gateway: "درگاه وب‌بیکری", credit: "نسیه" };
 const LICENSE_STATUS = { paid: "پرداخت‌شده", pending: "در انتظار پرداخت", canceled: "لغو" };
@@ -53,6 +56,7 @@ const state = {
   licenses: null,
   access: null,
   plan: "12m",
+  more: false,
   sms: [],
   settings: null,
   users: [],
@@ -222,6 +226,7 @@ const loaders = {
 async function navigate(page) {
   if (!allowed(page)) page = "dashboard";
   state.page = page;
+  state.more = false;
   state.modal = null;
   if (location.hash !== `#${page}`) location.hash = page;
   await loaders[page]();
@@ -450,10 +455,41 @@ function receiptHtml(modal) {
   ${sale.moadian_error ? `<p class="hint">${esc(sale.moadian_error)}</p>` : ""}
   <div class="row-actions"><button type="button" class="btn" data-act="print">چاپ</button>${sale.moadian_status === "success" ? "" : `<button type="button" class="btn primary" data-act="moadian-send" data-id="${sale.id}">ارسال به سامانه مودیان</button>`}${sale.moadian_reference ? `<button type="button" class="btn" data-act="moadian-inquiry" data-id="${sale.id}">استعلام مودیان</button>` : ""}</div>`;
 }
-function shell(content) {
-  const nav = NAV.filter((item) => item[2] !== "admin" || isAdmin()).map(([id, title]) => (
-    `<button type="button" class="nav-btn ${state.page === id ? "active" : ""}" data-act="nav" data-page="${id}">${title}</button>`
-  )).join("");
+function visibleNav(list) {
+  return list.filter((item) => item[2] !== "admin" || isAdmin());
+}
+function tabButton([id, title]) {
+  return `<button type="button" class="tab" data-act="nav" data-page="${id}">${title}</button>`;
+}
+function webShell() {
+  const more = visibleNav(MORE);
+  const moreBtn = more.length ? `<button type="button" class="tab" data-act="more">بیشتر</button>` : "";
+  return `<div class="webapp" data-user="${state.user.id}">
+    <header class="apphead">
+      <div class="appbar">
+        <div class="brand"><div class="mark">${logo()}</div><div><strong>دفترچی</strong><span id="who"></span></div></div>
+        <h1 id="page-title"></h1>
+        <div class="top-actions" id="app-status"></div>
+      </div>
+      <nav class="tabbar">${visibleNav(PRIMARY).map(tabButton).join("")}${moreBtn}</nav>
+    </header>
+    <div id="banner-host"></div>
+    <main class="stage" id="view"></main>
+    <div id="more-host"></div>
+    <div id="modal-host"></div>
+  </div>`;
+}
+function paintChrome() {
+  const who = document.getElementById("who");
+  if (who) who.textContent = state.user.name;
+  const title = document.getElementById("page-title");
+  if (title) title.textContent = TITLES[state.page] || "";
+  document.querySelectorAll(".tab[data-page]").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.page === state.page);
+  });
+  const moreBtn = document.querySelector(".tab[data-act=more]");
+  const inMore = visibleNav(MORE).some(([id]) => id === state.page);
+  if (moreBtn) moreBtn.classList.toggle("active", state.more || inMore);
   const open = state.registerInfo?.open;
   const pill = state.registerInfo
     ? `<span class="pill ${open ? "" : "warn"}">${open ? "صندوق باز" : "صندوق بسته"}</span>`
@@ -462,24 +498,23 @@ function shell(content) {
   const accessPill = access
     ? `<span class="pill ${access.active ? "" : "warn"}">${access.mode === "paid" ? "لایسنس فعال" : access.active ? `${num(access.days_left)} روز رایگان` : "مهلت رایگان تمام شد"}</span>`
     : "";
-  const banner = [
-    state.mustChange ? `<div class="banner">رمز اولیه هنوز فعال است. <button type="button" class="btn" data-act="password-modal">عوضش کنید</button></div>` : "",
-    updateBanner(),
-  ].join("");
-  return `<div class="shell">
-    <aside class="sidebar">
-      <div class="brand"><div class="mark">${logo()}</div><div><strong>دفترچی</strong><span>${esc(state.user.name)}</span></div></div>
-      <nav>${nav}</nav>
-      <div class="side-foot">${esc(state.user.role === "admin" ? "مدیر" : "صندوقدار")}</div>
-    </aside>
-    <main class="main">
-      <header class="topbar">
-        <div><h1>${TITLES[state.page] || ""}</h1></div>
-        <div class="top-actions">${accessPill}${pill}<button type="button" class="btn" data-act="password-modal">تغییر رمز</button><button type="button" class="btn" data-act="logout">خروج</button></div>
-      </header>
-      ${banner}${content}
-    </main>
-  </div>`;
+  const status = document.getElementById("app-status");
+  if (status) status.innerHTML = `${accessPill}${pill}<button type="button" class="btn" data-act="logout">خروج</button>`;
+  const banner = document.getElementById("banner-host");
+  if (banner) {
+    banner.innerHTML = [
+      state.mustChange ? `<div class="banner">رمز اولیه هنوز فعال است. <button type="button" class="btn" data-act="password-modal">عوضش کنید</button></div>` : "",
+      updateBanner(),
+    ].join("");
+  }
+  const moreHost = document.getElementById("more-host");
+  if (moreHost) {
+    moreHost.innerHTML = state.more
+      ? `<div class="more-sheet">${visibleNav(MORE).map(([id, label]) => `<button type="button" class="btn ${state.page === id ? "primary" : ""}" data-act="nav" data-page="${id}">${label}</button>`).join("")}<button type="button" class="btn" data-act="password-modal">تغییر رمز</button></div>`
+      : "";
+  }
+  const modal = document.getElementById("modal-host");
+  if (modal) modal.innerHTML = modalHtml();
 }
 
 function bars(summary) {
@@ -860,7 +895,11 @@ function render() {
     $app().innerHTML = authHtml();
     return;
   }
-  $app().innerHTML = shell(pageHtml()) + modalHtml();
+  const shell = document.querySelector(".webapp");
+  if (!shell || shell.dataset.user !== String(state.user.id)) $app().innerHTML = webShell();
+  const view = document.getElementById("view");
+  if (view) view.innerHTML = pageHtml();
+  paintChrome();
   if (state.focusBarcode) {
     document.getElementById("barcode")?.focus();
     state.focusBarcode = false;
@@ -1183,6 +1222,7 @@ async function onClick(event) {
     });
     return;
   }
+  if (act === "more") { state.more = !state.more; paintChrome(); return; }
   if (act === "nav") { await guard(() => navigate(el.dataset.page)); return; }
   if (act === "chart") { state.chart = el.dataset.range; render(); return; }
   if (act === "pick-plan") {

@@ -101,7 +101,7 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.12"
+APP_VERSION = "1.0.13"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -2060,7 +2060,24 @@ def no_store(resp):
 
 @app.get("/")
 def home():
-    return send_file(Path(__file__).resolve().parent / "templates" / "index.html")
+    resp = send_file(Path(__file__).resolve().parent / "templates" / "index.html")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/manifest.webmanifest")
+def web_manifest():
+    resp = send_file(Path(__file__).resolve().parent / "static" / "manifest.webmanifest", mimetype="application/manifest+json")
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/sw.js")
+def service_worker():
+    resp = send_file(Path(__file__).resolve().parent / "static" / "sw.js", mimetype="application/javascript")
+    resp.headers["Cache-Control"] = "no-store"
+    resp.headers["Service-Worker-Allowed"] = "/"
+    return resp
 
 
 @app.get("/uploads/<name>")
