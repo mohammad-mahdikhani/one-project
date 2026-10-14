@@ -103,7 +103,7 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.1.1"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -287,6 +287,134 @@ def name_key(value: str) -> str:
         text = text.replace(src, dst)
     text = re.sub(r"\s+", " ", text).strip().casefold()
     return text
+
+
+FILTER_FAMILIES = {"air", "water", "bath"}
+BATH_WORDS = ("حمام", "دوش", "سردوش", "شیرآلات", "روشویی", "توالت", "وان")
+ROLE_WORDS = ("سردوش", "شیرآلات", "روشویی", "توالت", "ممبران", "هوزینگ", "پمپ", "دستگاه", "دوش", "وان")
+MATERIAL_WORDS = (
+    ("الیافی", "fiber"),
+    ("کربنی", "carbon"),
+    ("کربن", "carbon"),
+    ("نمدی", "felt"),
+    ("سرامیکی", "ceramic"),
+    ("مینرال", "mineral"),
+    ("نخ", "yarn"),
+    ("هپا", "hepa"),
+)
+LATIN_MATERIALS = (
+    (re.compile(r"\bpp\b"), "pp"),
+    (re.compile(r"\bcto\b"), "cto"),
+    (re.compile(r"\bgac\b"), "gac"),
+    (re.compile(r"\buf\b"), "uf"),
+    (re.compile(r"\bhepa\b"), "hepa"),
+)
+MEASURE_WORDS = {"pp", "cto", "gac", "uf", "hepa", "inch", "micron", "um"}
+INCH_RE = re.compile(r"(\d+(?:[./]\d+)?)\s*(?:اینچ|inch\b)")
+MICRON_RE = re.compile(r"(\d+(?:[./]\d+)?)\s*(?:میکرون|micron\b|µm|μm|\bum\b)")
+CODE_RE = re.compile(r"[a-z]{2,}(?:[-/]\d{1,4})?|\d{5,12}")
+WOO_BATCH = 20
+
+
+def word_in(text: str, word: str) -> bool:
+    return re.search(rf"(?<![\w]){re.escape(word)}(?![\w])", text) is not None
+
+
+def measure_token(raw: str) -> str:
+    text = str(raw or "").strip()
+    if "/" in text:
+        left, right = text.split("/", 1)
+        try:
+            value = float(left) / float(right)
+        except (ValueError, ZeroDivisionError):
+            return text
+    else:
+        try:
+            value = float(text)
+        except ValueError:
+            return text
+    if value.is_integer():
+        return str(int(value))
+    return f"{value:.4f}".rstrip("0").rstrip(".")
+
+
+def product_family(text: str) -> str:
+    if any(word_in(text, word) for word in BATH_WORDS):
+        return "bath"
+    has_water = ("آب" in text) or word_in(text, "اب")
+    has_air = word_in(text, "هوا") or ("هپا" in text)
+    if has_air and has_water:
+        if "تصفیه هوا" in text and "تصفیه آب" not in text and "تصفیه اب" not in text:
+            return "air"
+        if ("تصفیه آب" in text or "تصفیه اب" in text) and "تصفیه هوا" not in text:
+            return "water"
+        return ""
+    if "تصفیه هوا" in text or "فیلتر هوا" in text or (has_air and "فیلتر" in text):
+        return "air"
+    if (
+        "تصفیه آب" in text or "تصفیه اب" in text or "فیلتر آب" in text or "فیلتر اب" in text
+        or ("فیلتر" in text and has_water)
+    ):
+        return "water"
+    return ""
+
+
+def product_marks(name: str) -> dict:
+    text = name_key(name)
+    inches = {"0.5"} if re.search(r"نیم\s*اینچ", text) else set()
+    inches.update(measure_token(match.group(1)) for match in INCH_RE.finditer(text))
+    microns = {measure_token(match.group(1)) for match in MICRON_RE.finditer(text)}
+    stripped = re.sub(r"نیم\s*اینچ", " ", text)
+    stripped = INCH_RE.sub(" ", stripped)
+    stripped = MICRON_RE.sub(" ", stripped)
+    codes = set()
+    for match in CODE_RE.finditer(stripped):
+        token = match.group(0)
+        if token in MEASURE_WORDS:
+            continue
+        codes.add(token)
+    materials = {token for word, token in MATERIAL_WORDS if word in text}
+    for pattern, token in LATIN_MATERIALS:
+        if pattern.search(text):
+            materials.add(token)
+    roles = {word for word in ROLE_WORDS if word_in(text, word)}
+    return {
+        "family": product_family(text),
+        "inches": frozenset(inches),
+        "microns": frozenset(microns),
+        "codes": frozenset(codes),
+        "materials": frozenset(materials),
+        "roles": frozenset(roles),
+        "key": text,
+    }
+
+
+def marks_match(left: dict, right: dict) -> bool:
+    if left["family"] not in FILTER_FAMILIES or left["family"] != right["family"]:
+        return False
+    if not (left["inches"] or left["microns"] or left["codes"]):
+        return False
+    return (
+        left["inches"] == right["inches"]
+        and left["microns"] == right["microns"]
+        and left["codes"] == right["codes"]
+        and left["materials"] == right["materials"]
+        and left["roles"] == right["roles"]
+    )
+
+
+def goods_match(left_name: str, right_name: str) -> bool:
+    left = product_marks(left_name)
+    right = product_marks(right_name)
+    if left["key"] and left["key"] == right["key"]:
+        return True
+    return marks_match(left, right)
+
+
+def sku_blocks(left, right) -> bool:
+    left_sku = str(left or "").strip()
+    right_sku = str(right or "").strip()
+    return bool(left_sku and right_sku and left_sku != right_sku)
 
 
 def header_field(value) -> str | None:
@@ -612,6 +740,7 @@ def product_dict(row, threshold: int, variations: list | None = None) -> dict:
     return {
         "id": row["id"],
         "name": row["name"],
+        "family": product_marks(row["name"])["family"],
         "sku": row["sku"] or "",
         "barcode": row["barcode"] or "",
         "price": row["price"],
@@ -2723,6 +2852,7 @@ def remember_product(by_barcode, by_sku, by_name, item):
     if item.get("sku"):
         by_sku[item["sku"]] = item
     key = name_key(item.get("name") or "")
+    item["marks"] = product_marks(item.get("name") or "")
     if not key:
         return
     bucket = by_name.setdefault(key, [])
@@ -2761,6 +2891,27 @@ def named_product(by_name, name, sku):
     return (blank or matches)[0]
 
 
+def fuzzy_product(by_name, name, sku):
+    wanted = product_marks(name)
+    if wanted["family"] not in FILTER_FAMILIES:
+        return None
+    found = []
+    seen = set()
+    for bucket in by_name.values():
+        for item in bucket:
+            if item["id"] in seen:
+                continue
+            seen.add(item["id"])
+            if sku_blocks(sku, item.get("sku")):
+                continue
+            other = item.get("marks") or product_marks(item.get("name") or "")
+            if marks_match(wanted, other):
+                found.append(item)
+    if len(found) == 1:
+        return found[0]
+    return None
+
+
 def locate_import(by_barcode, by_sku, by_name, item):
     found = by_barcode.get(item["barcode"]) if item.get("barcode") else None
     coded = by_sku.get(item["sku"]) if item.get("sku") else None
@@ -2768,7 +2919,10 @@ def locate_import(by_barcode, by_sku, by_name, item):
         raise AppError("بارکد و کد به دو کالای متفاوت مربوط است")
     if found or coded:
         return found or coded
-    return named_product(by_name, item["name"], item.get("sku"))
+    named = named_product(by_name, item["name"], item.get("sku"))
+    if named:
+        return named
+    return fuzzy_product(by_name, item["name"], item.get("sku"))
 
 
 def plan_product_import(conn, parsed):
@@ -2870,6 +3024,52 @@ def import_products():
     return jsonify(saved)
 
 
+def fetch_woo_catalog(settings: dict) -> list[dict]:
+    found = []
+    page = 1
+    while page <= 40:
+        status, rows = woo_request(settings, "GET", "products", {"per_page": "100", "page": str(page)})
+        if status >= 400 or not isinstance(rows, list):
+            break
+        found.extend(row for row in rows if isinstance(row, dict))
+        if len(rows) < 100:
+            break
+        page += 1
+    return found
+
+
+def remote_product_id(remote: dict) -> int:
+    try:
+        return int(remote.get("id") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def pick_remote_product(local, catalog: list[dict], used: set[int]) -> int | None:
+    local_sku = str(local["sku"] or "").strip()
+    same_sku = []
+    open_hits = []
+    for remote in catalog:
+        rid = remote_product_id(remote)
+        if not rid or rid in used:
+            continue
+        if str(remote.get("type") or "simple") not in {"simple", ""}:
+            continue
+        remote_sku = str(remote.get("sku") or "").strip()
+        if local_sku and remote_sku == local_sku:
+            same_sku.append(rid)
+            continue
+        if remote_sku or sku_blocks(local_sku, remote_sku):
+            continue
+        if goods_match(local["name"], remote.get("name") or ""):
+            open_hits.append(rid)
+    if len(same_sku) == 1:
+        return same_sku[0]
+    if same_sku or len(open_hits) != 1:
+        return None
+    return open_hits[0]
+
+
 @app.post("/api/products/woo/push")
 def woo_push():
     require_admin()
@@ -2885,30 +3085,64 @@ def woo_push():
             rows = conn.execute(f"SELECT * FROM products WHERE active=1 AND id IN ({marks})", [int(i) for i in ids]).fetchall()
         else:
             rows = conn.execute("SELECT * FROM products WHERE active=1 ORDER BY id").fetchall()
-    create_pairs, update_pairs = [], []
     skipped = 0
+    pending = []
+    update_pairs = []
+    used = set()
     for row in rows:
         if product_kind(row) == "variable":
             skipped += 1
             continue
-        item = woo_item(row)
         if row["woo_id"]:
+            try:
+                used.add(int(row["woo_id"]))
+            except (TypeError, ValueError):
+                pass
+            item = woo_item(row)
             item["id"] = row["woo_id"]
+            update_pairs.append((row["id"], item))
+        else:
+            pending.append(row)
+    catalog = None
+    if pending:
+        try:
+            catalog = fetch_woo_catalog(settings)
+        except AppError:
+            catalog = None
+    create_pairs = []
+    for row in pending:
+        item = woo_item(row)
+        rid = pick_remote_product(row, catalog, used) if catalog is not None else None
+        if rid:
+            used.add(rid)
+            item["id"] = rid
             update_pairs.append((row["id"], item))
         else:
             create_pairs.append((row["id"], item))
     created = updated = 0
     failed = []
+    progress = {"consecutive": 0, "stop": False}
 
     def send(kind: str, pairs: list):
         nonlocal created, updated
-        for offset in range(0, len(pairs), 20):
-            chunk = pairs[offset:offset + 20]
+        for offset in range(0, len(pairs), WOO_BATCH):
+            if progress["stop"]:
+                return
+            chunk = pairs[offset:offset + WOO_BATCH]
             body = {kind: [item for _pid, item in chunk]}
-            status, response = woo_request(settings, "POST", "products/batch", payload=body)
-            if not isinstance(response, dict) or not isinstance(response.get(kind), list):
-                message = response.get("message") if isinstance(response, dict) else str(status)
-                raise AppError(f"ووکامرس خطا داد: {message}", 502)
+            try:
+                _status, response = woo_request(settings, "POST", "products/batch", payload=body)
+                if not isinstance(response, dict) or not isinstance(response.get(kind), list):
+                    message = response.get("message") if isinstance(response, dict) else "پاسخ نامعتبر"
+                    raise AppError(f"ووکامرس خطا داد: {message}", 502)
+            except AppError as exc:
+                progress["consecutive"] += 1
+                for _pid, item in chunk:
+                    failed.append({"name": item.get("name"), "error": str(exc)})
+                if progress["consecutive"] >= 3:
+                    progress["stop"] = True
+                continue
+            progress["consecutive"] = 0
             with connect() as conn:
                 for (pid, item), result in zip(chunk, response[kind]):
                     if isinstance(result, dict) and result.get("id") and "error" not in result:
@@ -2920,10 +3154,10 @@ def woo_push():
                     else:
                         failed.append({"name": item.get("name"), "error": str(result)[:180]})
 
-    if create_pairs:
-        send("create", create_pairs)
     if update_pairs:
         send("update", update_pairs)
+    if create_pairs:
+        send("create", create_pairs)
     return jsonify(created=created, updated=updated, failed=failed, skipped=skipped)
 
 
@@ -3041,12 +3275,33 @@ def store_variation(conn, product_id: int, remote: dict, parents: list):
     return woo_id
 
 
+def find_unlinked_product(conn, name: str, remote_sku: str | None):
+    key = name_key(name)
+    wanted = product_marks(name)
+    rows = conn.execute("SELECT * FROM products WHERE active=1 AND woo_id IS NULL").fetchall()
+    exact, fuzzy = [], []
+    for item in rows:
+        if sku_blocks(remote_sku, item["sku"]):
+            continue
+        if key and name_key(item["name"]) == key:
+            exact.append(item)
+        elif marks_match(wanted, product_marks(item["name"])):
+            fuzzy.append(item)
+    if len(exact) == 1:
+        return exact[0]
+    if exact or len(fuzzy) != 1:
+        return None
+    return fuzzy[0]
+
+
 def store_remote_product(conn, remote: dict, variations: list[dict] | None, user_id: int) -> str:
     sku = str(remote.get("sku") or "").strip() or None
     barcode = remote_barcode(remote)
     row = conn.execute("SELECT * FROM products WHERE woo_id=?", (remote.get("id"),)).fetchone()
     if not row and sku:
         row = conn.execute("SELECT * FROM products WHERE sku=?", (sku,)).fetchone()
+    if not row and remote.get("name"):
+        row = find_unlinked_product(conn, remote["name"], sku)
     image = remote_image(remote)
     kind = "variable" if variations is not None else "simple"
     try:

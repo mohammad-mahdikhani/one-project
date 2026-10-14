@@ -342,6 +342,233 @@ class DaftarchiTest(unittest.TestCase):
         shirts = [item for item in products if item["name"] == "پیراهن"]
         self.assertEqual(sorted(item["sku"] for item in shirts), ["P1", "P2"])
 
+    def test_filter_signatures_keep_air_water_and_bath_apart(self):
+        water = appmod.product_marks("فیلتر تصفیه آب ۱۰ اینچ ۵ میکرون")
+        plain = appmod.product_marks("فیلتر آب 10 اینچ 5 میکرون")
+        self.assertEqual(water["family"], "water")
+        self.assertEqual(water["inches"], frozenset({"10"}))
+        self.assertEqual(water["microns"], frozenset({"5"}))
+        self.assertTrue(appmod.marks_match(water, plain))
+        self.assertFalse(appmod.marks_match(water, appmod.product_marks("فیلتر تصفیه هوا ۱۰ اینچ ۵ میکرون")))
+        self.assertFalse(appmod.marks_match(water, appmod.product_marks("فیلتر آب ۲۰ اینچ ۵ میکرون")))
+        self.assertFalse(appmod.marks_match(water, appmod.product_marks("فیلتر حمام ۱۰ اینچ")))
+        self.assertFalse(appmod.marks_match(
+            appmod.product_marks("فیلتر آب 10 اینچ 5 میکرون PP"),
+            appmod.product_marks("فیلتر آب 10 اینچ 5 میکرون CTO"),
+        ))
+        self.assertFalse(appmod.marks_match(
+            appmod.product_marks("فیلتر آب 10 اینچ 5 میکرون elite"),
+            appmod.product_marks("فیلتر آب 10 اینچ 5 میکرون lotus"),
+        ))
+        self.assertEqual(appmod.product_marks("فیلتر آب نیم اینچ")["inches"], frozenset({"0.5"}))
+        self.assertFalse(appmod.marks_match(water, appmod.product_marks("دستگاه تصفیه آب ۱۰ اینچ ۵ میکرون")))
+        self.assertEqual(appmod.product_marks("عسل کوهی")["family"], "")
+        self.add_product(name="فیلتر آب 10 اینچ 5 میکرون", price=1000, stock=1, sku=None, barcode=None)
+        self.add_product(name="فیلتر تصفیه هوا 10 اینچ 5 میکرون", price=2000, stock=1, sku=None, barcode=None)
+        self.add_product(name="فیلتر حمام 10 اینچ", price=3000, stock=1, sku=None, barcode=None)
+        self.add_product(name="فیلتر آب 10 اینچ 5 میکرون PP", price=4000, stock=1, sku=None, barcode=None)
+        self.add_product(name="عسل کوهی", price=5000, stock=1, sku=None, barcode=None)
+        book = Workbook()
+        sheet = book.active
+        sheet.append(["نام کالا", "SKU", "موجودی", "قیمت فروش"])
+        sheet.append(["فیلتر تصفیه آب ۱۰ اینچ ۵ میکرون", "W10-5", 6, 9000])
+        sheet.append(["فیلتر هوا ۱۰ اینچ ۵ میکرون", "A10-5", 2, 8000])
+        sheet.append(["فیلتر آب ۲۰ اینچ ۵ میکرون", "W20-5", 1, 11000])
+        sheet.append(["فیلتر حمام ۱۰ اینچ", None, 2, 3500])
+        sheet.append(["فیلتر آب 10 اینچ 5 میکرون CTO", "C10", 1, 7000])
+        sheet.append(["عسل", None, 1, 1000])
+        buf = io.BytesIO()
+        book.save(buf)
+        payload = buf.getvalue()
+        preview = self.client.post(
+            "/api/products/preview",
+            data={"file": (io.BytesIO(payload), "filters.xlsx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(preview.status_code, 200, preview.get_json())
+        seen = preview.get_json()
+        self.assertEqual(seen["updating"], 3)
+        self.assertEqual(seen["creating"], 3)
+        saved = self.client.post(
+            "/api/products/import",
+            data={"file": (io.BytesIO(payload), "filters.xlsx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        result = saved.get_json()
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["updated"], 3)
+        self.assertEqual(result["created"], 3)
+        products = self.client.get("/api/products").get_json()["products"]
+        self.assertEqual(len(products), 8)
+        matched = next(item for item in products if item["sku"] == "W10-5")
+        self.assertEqual(matched["price"], 9000)
+        self.assertEqual(matched["stock"], 6)
+        self.assertEqual(matched["family"], "water")
+        air = next(item for item in products if item["sku"] == "A10-5")
+        self.assertEqual(air["family"], "air")
+        self.assertEqual(air["price"], 8000)
+        bath = next(item for item in products if item["family"] == "bath")
+        self.assertEqual(bath["price"], 3500)
+        self.assertEqual(bath["stock"], 2)
+        pp = next(item for item in products if "PP" in item["name"])
+        self.assertEqual(pp["price"], 4000)
+        self.assertFalse(pp["sku"])
+        cto = next(item for item in products if item["sku"] == "C10")
+        self.assertEqual(cto["family"], "water")
+        wide = next(item for item in products if item["sku"] == "W20-5")
+        self.assertEqual(wide["family"], "water")
+        self.assertIn("۲۰", wide["name"])
+        honey = [item for item in products if "عسل" in item["name"]]
+        self.assertEqual(sorted(item["name"] for item in honey), ["عسل", "عسل کوهی"])
+        twin = self.add_product(name="فیلتر تصفیه آب 10 اینچ 5 میکرون خانگی", price=1000, stock=1, sku=None, barcode=None)
+        self.assertEqual(twin["family"], "water")
+        again = Workbook()
+        sheet = again.active
+        sheet.append(["نام کالا", "SKU", "موجودی", "قیمت فروش"])
+        sheet.append(["فیلتر آب 10 اینچ 5 میکرون سری تازه", None, 1, 12000])
+        buf = io.BytesIO()
+        again.save(buf)
+        ambiguous = self.client.post(
+            "/api/products/import",
+            data={"file": (io.BytesIO(buf.getvalue()), "ambiguous.xlsx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(ambiguous.status_code, 200, ambiguous.get_json())
+        self.assertEqual(ambiguous.get_json()["created"], 1)
+        self.assertEqual(ambiguous.get_json()["updated"], 0)
+
+    def test_woo_links_the_same_filter_and_writes_the_missing_code(self):
+        water = self.add_product(
+            name="فیلتر تصفیه آب ۱۰ اینچ ۵ میکرون", price=9000, stock=4,
+            sku="W10-5", barcode="6260001", cost=0,
+        )
+        air = self.add_product(
+            name="فیلتر تصفیه هوا ۱۰ اینچ ۵ میکرون", price=8000, stock=2,
+            sku="A10-5", barcode="6260002", cost=0,
+        )
+        wide = self.add_product(
+            name="فیلتر آب ۲۰ اینچ ۵ میکرون", price=11000, stock=1,
+            sku="W20-5", barcode="6260003", cost=0,
+        )
+        catalog = [
+            {"id": 70, "name": "فیلتر آب 10 اینچ 5 میکرون", "type": "simple", "sku": "", "regular_price": "1000", "stock_quantity": 1},
+            {"id": 71, "name": "فیلتر هوا 10 اینچ 5 میکرون", "type": "simple", "sku": "", "regular_price": "1000", "stock_quantity": 1},
+            {"id": 72, "name": "فیلتر آب 20 اینچ 1 میکرون", "type": "simple", "sku": "OTHER", "regular_price": "1000", "stock_quantity": 1},
+        ]
+        seen = {"update": [], "create": []}
+
+        def fake_http(method, url, payload=None, headers=None, form=None, timeout=12):
+            if "batch" in url:
+                kind = "update" if payload.get("update") else "create"
+                seen[kind].extend(payload[kind])
+                return 200, {kind: [{"id": item.get("id") or 90, "name": item["name"]} for item in payload[kind]]}
+            if "/products?" in url:
+                return 200, catalog
+            return 200, []
+
+        original = appmod.http_request
+        appmod.http_request = fake_http
+        try:
+            self.client.put("/api/settings", json={
+                "wp_url": "https://shop.example",
+                "woo_key": "ck",
+                "woo_secret": "cs",
+            })
+            pushed = self.client.post("/api/products/woo/push", json={})
+            self.assertEqual(pushed.status_code, 200, pushed.get_json())
+            body = pushed.get_json()
+            self.assertEqual(body["updated"], 2)
+            self.assertEqual(body["created"], 1)
+            self.assertEqual(body["failed"], [])
+            updates = {item["id"]: item for item in seen["update"]}
+            self.assertEqual(set(updates), {70, 71})
+            self.assertEqual(updates[70]["sku"], "W10-5")
+            self.assertEqual(updates[70]["meta_data"], [{"key": "barcode", "value": "6260001"}])
+            self.assertEqual(updates[71]["sku"], "A10-5")
+            self.assertEqual(seen["create"][0]["sku"], "W20-5")
+            self.assertNotIn("id", seen["create"][0])
+            products = {item["id"]: item for item in self.client.get("/api/products").get_json()["products"]}
+            self.assertEqual(products[water["id"]]["woo_id"], 70)
+            self.assertEqual(products[air["id"]]["woo_id"], 71)
+            self.assertEqual(products[wide["id"]]["woo_id"], 90)
+        finally:
+            appmod.http_request = original
+
+    def test_woo_pull_links_a_coded_filter_without_duplicating_it(self):
+        local = self.add_product(
+            name="فیلتر آب 10 اینچ 5 میکرون", price=9000, stock=4,
+            sku="W10-5", barcode=None, cost=0,
+        )
+        remote = [
+            {"id": 70, "name": "فیلتر تصفیه آب 10 اینچ 5 میکرون", "type": "simple", "sku": "", "regular_price": "9000", "stock_quantity": 4},
+            {"id": 71, "name": "فیلتر تصفیه هوا 10 اینچ 5 میکرون", "type": "simple", "sku": "", "regular_price": "8000", "stock_quantity": 1},
+            {"id": 72, "name": "فیلتر آب 10 اینچ 5 میکرون", "type": "simple", "sku": "OTHER", "regular_price": "1000", "stock_quantity": 1},
+        ]
+
+        def fake_http(method, url, payload=None, headers=None, form=None, timeout=12):
+            if "/products?" in url:
+                return 200, remote
+            return 200, []
+
+        original = appmod.http_request
+        appmod.http_request = fake_http
+        try:
+            self.client.put("/api/settings", json={
+                "wp_url": "https://shop.example",
+                "woo_key": "ck",
+                "woo_secret": "cs",
+            })
+            pulled = self.client.post("/api/products/woo/pull", json={})
+        finally:
+            appmod.http_request = original
+        self.assertEqual(pulled.status_code, 200, pulled.get_json())
+        self.assertEqual(pulled.get_json()["updated"], 1)
+        self.assertEqual(pulled.get_json()["imported"], 2)
+        products = self.client.get("/api/products").get_json()["products"]
+        self.assertEqual(len(products), 3)
+        kept = next(item for item in products if item["id"] == local["id"])
+        self.assertEqual(kept["woo_id"], 70)
+        self.assertEqual(kept["sku"], "W10-5")
+        self.assertEqual(kept["family"], "water")
+        other = next(item for item in products if item["woo_id"] == 72)
+        self.assertEqual(other["sku"], "OTHER")
+        self.assertNotEqual(other["id"], local["id"])
+
+    def test_woo_push_keeps_rows_confirmed_before_a_later_failure(self):
+        first = self.add_product(name="عسل یک", price=1000, stock=1, sku="H1", barcode="6261001", cost=0)
+        second = self.add_product(name="عسل دو", price=2000, stock=1, sku="H2", barcode="6261002", cost=0)
+        calls = {"batch": 0}
+
+        def fake_http(method, url, payload=None, headers=None, form=None, timeout=12):
+            if "batch" in url:
+                calls["batch"] += 1
+                if calls["batch"] > 1:
+                    raise appmod.AppError("قطع شد", 502)
+                return 200, {"create": [{"id": 55, "name": payload["create"][0]["name"]}]}
+            return 200, []
+
+        original = appmod.http_request
+        appmod.WOO_BATCH = 1
+        appmod.http_request = fake_http
+        try:
+            self.client.put("/api/settings", json={
+                "wp_url": "https://shop.example",
+                "woo_key": "ck",
+                "woo_secret": "cs",
+            })
+            pushed = self.client.post("/api/products/woo/push", json={})
+        finally:
+            appmod.WOO_BATCH = 20
+            appmod.http_request = original
+        self.assertEqual(pushed.status_code, 200, pushed.get_json())
+        body = pushed.get_json()
+        self.assertEqual(body["created"], 1)
+        self.assertEqual(len(body["failed"]), 1)
+        products = {item["id"]: item for item in self.client.get("/api/products").get_json()["products"]}
+        self.assertEqual(products[first["id"]]["woo_id"], 55)
+        self.assertIsNone(products[second["id"]]["woo_id"])
+
     def test_support_message_reaches_telegram_without_showing_the_token(self):
         token = "123456789:AAHxxxxxxxxxxxxxxxxxxxx"
         rejected = self.client.put("/api/settings", json={"telegram_bot_token": "nope"})
@@ -375,7 +602,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertIn("api.telegram.org/bot" + token + "/sendMessage", seen["url"])
         self.assertEqual(seen["chat"], "55001")
         self.assertIn("صندوق بسته ماند", seen["text"])
-        self.assertIn("1.1.0", seen["text"])
+        self.assertIn("1.1.1", seen["text"])
         listed = self.client.get("/api/support/messages").get_json()["messages"]
         self.assertEqual(listed[-1]["body"], "صندوق بسته ماند")
         self.assertEqual(listed[-1]["delivery"], "telegram")
@@ -968,7 +1195,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.1.0")
+        self.assertEqual(appmod.APP_VERSION, "1.1.1")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -993,7 +1220,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
-        self.assertIn("1.1.0", run)
+        self.assertIn("1.1.1", run)
         self.assertIn("invoice-edge", script)
         self.assertIn("نوع متغیر را انتخاب کنید", script)
         self.assertIn("همین مقدارهای نوشته‌شده", script)
@@ -1006,6 +1233,8 @@ class DaftarchiTest(unittest.TestCase):
         self.assertIn("ارسال به تلگرام", script)
         self.assertIn("گزارش این خطا", script)
         self.assertIn("data-act=\"check-update\"", script)
+        self.assertIn("data-act=\"catalog-filter\"", script)
+        self.assertIn("تصفیه هوا", script)
         page = Path("/workspace/templates/index.html").read_text(encoding="utf-8")
         self.assertIn("/manifest.webmanifest", page)
         self.assertIn("/sw.js", page)
@@ -1026,7 +1255,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.1.0")
+        self.assertEqual(boot["version"], "1.1.1")
         home = self.client.get("/")
         self.assertIn("manifest.webmanifest", home.get_data(as_text=True))
         manifest = json.loads(self.client.get("/manifest.webmanifest").get_data(as_text=True))
@@ -1035,7 +1264,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(manifest["name"], "دفترچی")
         worker = self.client.get("/sw.js")
         self.assertEqual(worker.status_code, 200)
-        self.assertIn("daftarchi-1.1.0", worker.get_data(as_text=True))
+        self.assertIn("daftarchi-1.1.1", worker.get_data(as_text=True))
         relay = Path("/workspace/site-updates/daftarchi/telegram.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-telegram", relay)
         self.assertIn("telegram.json", relay)
