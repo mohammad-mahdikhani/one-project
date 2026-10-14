@@ -101,7 +101,7 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.14"
+APP_VERSION = "1.0.15"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -272,6 +272,14 @@ def clean_code(value, label: str) -> str | None:
         value = int(value)
     text = clean_text(value, label, 64)
     return text or None
+
+
+def name_key(value: str) -> str:
+    text = str(value or "").translate(DIGITS)
+    for src, dst in (("ي", "ی"), ("ك", "ک"), ("ة", "ه"), ("ۀ", "ه"), ("\u200c", " "), ("\u200d", ""), ("\u0640", "")):
+        text = text.replace(src, dst)
+    text = re.sub(r"\s+", " ", text).strip().casefold()
+    return text
 
 
 def header_field(value) -> str | None:
@@ -2604,17 +2612,103 @@ def read_product_sheet(upload):
     return parsed, errors
 
 
+def product_snapshot(row) -> dict:
+    return {key: row[key] for key in row.keys()} if not isinstance(row, dict) else dict(row)
+
+
+def remember_product(by_barcode, by_sku, by_name, item):
+    if item.get("barcode"):
+        by_barcode[item["barcode"]] = item
+    if item.get("sku"):
+        by_sku[item["sku"]] = item
+    key = name_key(item.get("name") or "")
+    if not key:
+        return
+    bucket = by_name.setdefault(key, [])
+    by_name[key] = [old for old in bucket if old["id"] != item["id"]]
+    by_name[key].append(item)
+
+
+def forget_product(by_barcode, by_sku, by_name, item):
+    if item.get("barcode") and by_barcode.get(item["barcode"], {}).get("id") == item["id"]:
+        by_barcode.pop(item["barcode"], None)
+    if item.get("sku") and by_sku.get(item["sku"], {}).get("id") == item["id"]:
+        by_sku.pop(item["sku"], None)
+    key = name_key(item.get("name") or "")
+    if key in by_name:
+        by_name[key] = [old for old in by_name[key] if old["id"] != item["id"]]
+
+
+def index_products(rows):
+    by_barcode, by_sku, by_name = {}, {}, {}
+    for row in rows:
+        remember_product(by_barcode, by_sku, by_name, product_snapshot(row))
+    return by_barcode, by_sku, by_name
+
+
+def named_product(by_name, name, sku):
+    matches = list(by_name.get(name_key(name)) or [])
+    if not matches:
+        return None
+    if sku:
+        for item in matches:
+            if item.get("sku") == sku:
+                return item
+        blank = [item for item in matches if not item.get("sku")]
+        return blank[0] if blank else None
+    blank = [item for item in matches if not item.get("sku")]
+    return (blank or matches)[0]
+
+
+def locate_import(by_barcode, by_sku, by_name, item):
+    found = by_barcode.get(item["barcode"]) if item.get("barcode") else None
+    coded = by_sku.get(item["sku"]) if item.get("sku") else None
+    if found and coded and found["id"] != coded["id"]:
+        raise AppError("بارکد و کد به دو کالای متفاوت مربوط است")
+    if found or coded:
+        return found or coded
+    return named_product(by_name, item["name"], item.get("sku"))
+
+
+def plan_product_import(conn, parsed):
+    by_barcode, by_sku, by_name = index_products(conn.execute("SELECT * FROM products").fetchall())
+    creating = updating = 0
+    errors = []
+    temp_id = 0
+    for item in parsed:
+        try:
+            existing = locate_import(by_barcode, by_sku, by_name, item)
+        except AppError as exc:
+            errors.append({"row": item["row"], "error": str(exc)})
+            continue
+        if existing:
+            updating += 1
+            current = dict(existing)
+            current["name"] = item["name"]
+            current["sku"] = item["sku"] or existing.get("sku")
+            current["barcode"] = item["barcode"] or existing.get("barcode")
+            forget_product(by_barcode, by_sku, by_name, existing)
+            remember_product(by_barcode, by_sku, by_name, current)
+        else:
+            creating += 1
+            temp_id -= 1
+            remember_product(by_barcode, by_sku, by_name, {
+                "id": temp_id,
+                "name": item["name"],
+                "sku": item["sku"],
+                "barcode": item["barcode"],
+            })
+    return creating, updating, errors
+
+
 def save_imported_products(user, parsed):
     created, updated, errors, ids = 0, 0, [], []
     with connect() as conn:
+        by_barcode, by_sku, by_name = index_products(conn.execute("SELECT * FROM products").fetchall())
         for item in parsed:
             try:
-                existing = None
-                if item["barcode"]:
-                    existing = conn.execute("SELECT * FROM products WHERE barcode=?", (item["barcode"],)).fetchone()
-                if not existing and item["sku"]:
-                    existing = conn.execute("SELECT * FROM products WHERE sku=?", (item["sku"],)).fetchone()
-                if existing:
+                existing = locate_import(by_barcode, by_sku, by_name, item)
+                if existing and existing["id"] > 0:
                     new_stock = item["stock"] if item["stock"] is not None else existing["stock"]
                     conn.execute(
                         """UPDATE products SET name=?, sku=?, barcode=?, price=?, cost=?, stock=?, image=COALESCE(?, image),
@@ -2625,6 +2719,9 @@ def save_imported_products(user, parsed):
                         log_stock(conn, existing["id"], "price", 0, existing["price"], item["price"], "ورود اکسل", user["id"])
                     if new_stock != existing["stock"]:
                         log_stock(conn, existing["id"], "adjust", new_stock - existing["stock"], existing["stock"], new_stock, "ورود اکسل", user["id"])
+                    fresh = product_snapshot(conn.execute("SELECT * FROM products WHERE id=?", (existing["id"],)).fetchone())
+                    forget_product(by_barcode, by_sku, by_name, existing)
+                    remember_product(by_barcode, by_sku, by_name, fresh)
                     updated += 1
                     ids.append(existing["id"])
                 else:
@@ -2636,6 +2733,8 @@ def save_imported_products(user, parsed):
                     )
                     if initial:
                         log_stock(conn, cur.lastrowid, "adjust", initial, 0, initial, "ورود اکسل", user["id"])
+                    fresh = product_snapshot(conn.execute("SELECT * FROM products WHERE id=?", (cur.lastrowid,)).fetchone())
+                    remember_product(by_barcode, by_sku, by_name, fresh)
                     created += 1
                     ids.append(cur.lastrowid)
             except AppError as exc:
@@ -2649,13 +2748,16 @@ def save_imported_products(user, parsed):
 def preview_products():
     require_admin()
     parsed, errors = read_product_sheet(request.files.get("file"))
+    with connect() as conn:
+        creating, updating, plan_errors = plan_product_import(conn, parsed)
+    errors = errors + plan_errors
     preview = [{
         "name": item["name"],
         "sku": item["sku"] or "",
         "stock": 0 if item["stock"] is None else item["stock"],
         "price": item["price"],
     } for item in parsed[:8]]
-    return jsonify(total=len(parsed), preview=preview, errors=errors[:30], error_count=len(errors))
+    return jsonify(total=len(parsed), preview=preview, errors=errors[:30], error_count=len(errors), creating=creating, updating=updating)
 
 
 @app.post("/api/products/import")

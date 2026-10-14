@@ -1,5 +1,5 @@
 {
-  "version": "1.0.14",
+  "version": "1.0.15",
   "url": "https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi.exe",
-  "notes": "ورود اکسل اول پیش‌نمایش می‌شود. ستون‌های نام کالا، SKU، موجودی و قیمت فروش ذخیره می‌شوند، حتی اگر قیمت صفر باشد."
+  "notes": "اگر کالا شناسه نداشته باشد، ورود اکسل با نام کالا همان کالا را به‌روز می‌کند."
 }

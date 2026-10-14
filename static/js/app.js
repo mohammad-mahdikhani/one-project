@@ -645,7 +645,7 @@ function productsHtml() {
       <button type="button" class="btn" data-act="open-import">ورود با اکسل</button>
       <button type="button" class="btn" data-act="woo-push">ارسال همه به ووکامرس</button>
       <button type="button" class="btn" data-act="woo-pull">دریافت از ووکامرس</button>
-    </div><p class="hint">ستون‌های اکسل: نام کالا، SKU، موجودی، قیمت فروش. بارکد، قیمت خرید، تصویر و شناسه مودیان هم اگر باشند خوانده می‌شوند. اول پیش‌نمایش می‌آید و با دکمه ثبت، کالاها ذخیره می‌شوند.</p></section>
+    </div><p class="hint">ستون‌های اکسل: نام کالا، SKU، موجودی، قیمت فروش. اگر کالا شناسه نداشته باشد با نام همان کالای قبلی به‌روز می‌شود. ی و ک عربی و فاصله اضافه فرق نمی‌کند.</p></section>
     <section class="card"><input id="product-query" value="${esc(state.productQuery)}" placeholder="جستجو"><div id="product-table">${productRows()}</div></section>
   </div>`;
 }
@@ -886,7 +886,7 @@ function modalHtml() {
         <a class="btn" href="/api/products/template">دانلود قالب نمونه اکسل</a>
       </div>
       <p class="hint">${modal.name ? esc(modal.name) : "ستون‌ها را مثل قالب بگذارید: نام کالا، SKU، موجودی، قیمت فروش. قیمت صفر هم ذخیره می‌شود."}</p>
-      ${preview ? `<p>پیش‌نمایش ${num(rows.length)} ردیف از ${num(preview.total)} کالا</p>${table}${problems}` : ""}
+      ${preview ? `<p>پیش‌نمایش ${num(rows.length)} ردیف از ${num(preview.total)} کالا. ${num(preview.updating || 0)} کالا با نام یا کد قبلی به‌روز می‌شود و ${num(preview.creating || 0)} کالا تازه است.</p>${table}${problems}` : ""}
       <div class="row-actions">
         <button type="button" class="btn primary" data-act="commit-import" ${preview?.total ? "" : "disabled"}>ثبت ${num(preview?.total || 0)} کالا</button>
         <button type="button" class="btn" data-act="close-modal">انصراف</button>
@@ -1253,6 +1253,7 @@ async function onClick(event) {
   }
   if (act === "print") { window.print(); return; }
   if (act === "password-modal") { state.modal = { type: "password" }; render(); return; }
+  if (act === "open-import") { state.modal = { type: "import", name: "", preview: null }; render(); return; }
   await guard(async () => {
     if (act === "logout") {
       await api("/api/auth/logout", { method: "POST" });
@@ -1288,9 +1289,6 @@ async function onClick(event) {
       } else await submitSale(el.dataset.method, "");
     } else if (act === "confirm-card") {
       await submitSale("card", document.getElementById("pos-ref")?.value || "");
-    } else if (act === "open-import") {
-      state.modal = { type: "import", name: "", preview: null };
-      render();
     } else if (act === "commit-import") {
       if (!state.importFile || !state.modal?.preview?.total) return toast("اول فایل اکسل را انتخاب کنید");
       const body = new FormData();

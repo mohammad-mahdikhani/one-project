@@ -298,6 +298,50 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(again.get_json()["updated"], 40)
         self.assertEqual(len(self.client.get("/api/products").get_json()["products"]), 40)
 
+    def test_excel_matches_products_by_name_when_they_have_no_code(self):
+        self.add_product(name="عسل کوهی", price=10000, stock=2, sku=None, barcode=None)
+        self.add_product(name="پیراهن", price=80000, stock=1, sku="P1", barcode=None)
+        book = Workbook()
+        sheet = book.active
+        sheet.append(["نام کالا", "SKU", "موجودی", "قیمت فروش"])
+        sheet.append(["عسل کوهي", None, 4, 45000])
+        sheet.append(["عسل‌کوهی", None, 5, 48000])
+        sheet.append(["شلوار کتان", None, 1, 1000])
+        sheet.append(["شلوار کتان", "", 2, 5000])
+        sheet.append(["پیراهن", "P2", 3, 90000])
+        buf = io.BytesIO()
+        book.save(buf)
+        payload = buf.getvalue()
+        preview = self.client.post(
+            "/api/products/preview",
+            data={"file": (io.BytesIO(payload), "names.xlsx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(preview.status_code, 200, preview.get_json())
+        seen = preview.get_json()
+        self.assertEqual(seen["updating"], 3)
+        self.assertEqual(seen["creating"], 2)
+        saved = self.client.post(
+            "/api/products/import",
+            data={"file": (io.BytesIO(payload), "names.xlsx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        result = saved.get_json()
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["created"], 2)
+        self.assertEqual(result["updated"], 3)
+        products = self.client.get("/api/products").get_json()["products"]
+        self.assertEqual(len(products), 4)
+        honey = next(item for item in products if "عسل" in item["name"])
+        self.assertEqual(honey["price"], 48000)
+        self.assertEqual(honey["stock"], 5)
+        self.assertFalse(honey["sku"])
+        cotton = next(item for item in products if item["name"] == "شلوار کتان")
+        self.assertEqual(cotton["price"], 5000)
+        shirts = [item for item in products if item["name"] == "پیراهن"]
+        self.assertEqual(sorted(item["sku"] for item in shirts), ["P1", "P2"])
+
     def test_password_reset_and_cashier(self):
         forgot = self.client.post("/api/auth/forgot", json={"ident": "09120000000"})
         self.assertEqual(forgot.status_code, 200, forgot.get_json())
@@ -870,7 +914,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.0.14")
+        self.assertEqual(appmod.APP_VERSION, "1.0.15")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -895,7 +939,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
-        self.assertIn("1.0.14", run)
+        self.assertIn("1.0.15", run)
         self.assertIn("invoice-edge", script)
         self.assertIn("نوع متغیر را انتخاب کنید", script)
         self.assertIn("همین مقدارهای نوشته‌شده", script)
@@ -904,6 +948,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertIn("data-act=\"more\"", script)
         self.assertIn("data-act=\"commit-import\"", script)
         self.assertIn("نام کالا", script)
+        self.assertIn("با نام یا کد قبلی", script)
         page = Path("/workspace/templates/index.html").read_text(encoding="utf-8")
         self.assertIn("/manifest.webmanifest", page)
         self.assertIn("/sw.js", page)
@@ -924,7 +969,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.0.14")
+        self.assertEqual(boot["version"], "1.0.15")
         home = self.client.get("/")
         self.assertIn("manifest.webmanifest", home.get_data(as_text=True))
         manifest = json.loads(self.client.get("/manifest.webmanifest").get_data(as_text=True))
@@ -933,7 +978,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(manifest["name"], "دفترچی")
         worker = self.client.get("/sw.js")
         self.assertEqual(worker.status_code, 200)
-        self.assertIn("daftarchi-1.0.14", worker.get_data(as_text=True))
+        self.assertIn("daftarchi-1.0.15", worker.get_data(as_text=True))
         pay = Path("/workspace/site-updates/daftarchi/pay.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-pay", pay)
         self.assertIn("gateway.zibal.ir/v1/request", pay)
