@@ -206,6 +206,7 @@ tr.selected { background: var(--soft); }
   display: flex; align-items: center; justify-content: center; padding: 18px; z-index: 20;
 }
 .modal { width: min(560px, 100%); max-height: min(88vh, 820px); overflow: auto; }
+.import-modal { width: min(720px, 100%); }
 .invoice-modal { width: min(680px, 100%); }
 .invoice { display: grid; gap: 8px; padding: 10px; background: var(--accent); border-radius: 18px; color: var(--ink); }
 .invoice-edge { display: flex; justify-content: space-between; align-items: center; gap: 6px; }

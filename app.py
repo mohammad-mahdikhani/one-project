@@ -47,11 +47,11 @@ PLANS = {
     "50y": ("پنجاه ساله", 600, "price_50y"),
 }
 HEADER_MAP = {
-    "name": "name", "نام": "name", "عنوان": "name",
-    "sku": "sku", "کد": "sku", "کد کالا": "sku",
+    "name": "name", "نام": "name", "عنوان": "name", "نام کالا": "name", "نام محصول": "name", "عنوان کالا": "name",
+    "sku": "sku", "کد": "sku", "کد کالا": "sku", "کد محصول": "sku",
     "barcode": "barcode", "بارکد": "barcode",
-    "price": "price", "قیمت": "price", "قیمت فروش": "price",
-    "stock": "stock", "موجودی": "stock",
+    "price": "price", "قیمت": "price", "قیمت فروش": "price", "فی فروش": "price",
+    "stock": "stock", "موجودی": "stock", "موجودی انبار": "stock",
     "cost": "cost", "قیمت خرید": "cost",
     "image": "image", "تصویر": "image", "آدرس تصویر": "image",
     "tax_code": "tax_code", "شناسه مودیان": "tax_code", "شناسه کالا": "tax_code", "sstid": "tax_code",
@@ -101,7 +101,7 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.0.13"
+APP_VERSION = "1.0.14"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -268,8 +268,18 @@ def clean_text(value, label: str, max_len: int, required: bool = False) -> str:
 
 
 def clean_code(value, label: str) -> str | None:
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
     text = clean_text(value, label, 64)
     return text or None
+
+
+def header_field(value) -> str | None:
+    text = str(value or "").replace("\u200c", " ").replace("ي", "ی").replace("ك", "ک")
+    text = re.sub(r"\s+", " ", text).strip()
+    if not text:
+        return None
+    return HEADER_MAP.get(text) or HEADER_MAP.get(text.lower())
 
 
 def clean_tax_code(value) -> str | None:
@@ -2532,7 +2542,7 @@ def product_template():
     book = Workbook()
     sheet = book.active
     sheet.title = "products"
-    sheet.append(["نام", "کد", "بارکد", "قیمت", "موجودی", "قیمت خرید", "تصویر", "شناسه مودیان"])
+    sheet.append(["نام کالا", "SKU", "موجودی", "قیمت فروش", "بارکد", "قیمت خرید", "تصویر", "شناسه مودیان"])
     sheet.append(["چای ۵۰۰ گرمی", "TEA-500", "6260000000011", 45000, 12, 30000, "", ""])
     buf = BytesIO()
     book.save(buf)
@@ -2545,79 +2555,116 @@ def product_template():
     )
 
 
-@app.post("/api/products/import")
-def import_products():
-    user = require_admin()
-    upload = request.files.get("file")
+def read_product_sheet(upload):
     if not upload:
         raise AppError("فایل اکسل را انتخاب کنید")
     try:
-        book = load_workbook(upload, data_only=True)
-        sheet = book.active
+        book = load_workbook(upload, data_only=True, read_only=True)
     except Exception:
         raise AppError("فایل اکسل خوانده نشد")
-    rows = list(sheet.iter_rows(values_only=True))
+    try:
+        sheet = book.active
+        if sheet is None:
+            raise AppError("فایل خالی است")
+        rows = []
+        for row in sheet.iter_rows(values_only=True):
+            rows.append(tuple(row))
+            if len(rows) > 5001:
+                raise AppError("فایل بیشتر از ۵۰۰۰ کالا است")
+    finally:
+        book.close()
     if not rows:
         raise AppError("فایل خالی است")
-    fields = []
-    for cell in rows[0]:
-        key = str(cell or "").strip()
-        fields.append(HEADER_MAP.get(key) or HEADER_MAP.get(key.lower()))
+    fields = [header_field(cell) for cell in rows[0]]
     if "name" not in fields or "price" not in fields:
-        raise AppError("ستون نام و قیمت لازم است")
+        raise AppError("ستون نام و قیمت لازم است. سرستون می‌تواند نام کالا، SKU، موجودی و قیمت فروش باشد")
+    parsed, errors = [], []
+    for index, row in enumerate(rows[1:], start=2):
+        if not row or all(cell is None or str(cell).strip() == "" for cell in row):
+            continue
+        data = {}
+        for field, cell in zip(fields, row):
+            if field and field not in data:
+                data[field] = cell
+        try:
+            item = {
+                "row": index,
+                "name": clean_text(data.get("name"), "نام کالا", 180, required=True),
+                "price": parse_money(data.get("price"), "قیمت"),
+                "cost": parse_money(data.get("cost"), "قیمت خرید", allow_empty=True) if "cost" in fields else 0,
+                "sku": clean_code(data.get("sku"), "کد") if "sku" in fields else None,
+                "barcode": clean_code(data.get("barcode"), "بارکد") if "barcode" in fields else None,
+                "image": clean_image(data.get("image")) if data.get("image") else None,
+                "tax_code": clean_tax_code(data.get("tax_code")) if "tax_code" in fields else None,
+                "stock": parse_money(data.get("stock"), "موجودی", allow_empty=True) if "stock" in fields and data.get("stock") not in (None, "") else None,
+            }
+            parsed.append(item)
+        except AppError as exc:
+            errors.append({"row": index, "error": str(exc)})
+    return parsed, errors
+
+
+def save_imported_products(user, parsed):
     created, updated, errors, ids = 0, 0, [], []
     with connect() as conn:
-        for index, row in enumerate(rows[1:], start=2):
-            if not row or all(cell is None or str(cell).strip() == "" for cell in row):
-                continue
-            data = {}
-            for field, cell in zip(fields, row):
-                if field:
-                    data[field] = cell
+        for item in parsed:
             try:
-                name = clean_text(data.get("name"), "نام کالا", 120, required=True)
-                price = parse_money(data.get("price"), "قیمت")
-                cost = parse_money(data.get("cost"), "قیمت خرید", allow_empty=True) if "cost" in fields else 0
-                sku = clean_code(data.get("sku"), "کد") if "sku" in fields else None
-                barcode = clean_code(data.get("barcode"), "بارکد") if "barcode" in fields else None
-                image = clean_image(data.get("image")) if data.get("image") else None
-                tax_code = clean_tax_code(data.get("tax_code")) if "tax_code" in fields else None
-                has_stock = "stock" in fields and data.get("stock") not in (None, "")
-                stock = parse_money(data.get("stock"), "موجودی", allow_empty=True) if has_stock else None
                 existing = None
-                if barcode:
-                    existing = conn.execute("SELECT * FROM products WHERE barcode=?", (barcode,)).fetchone()
-                if not existing and sku:
-                    existing = conn.execute("SELECT * FROM products WHERE sku=?", (sku,)).fetchone()
+                if item["barcode"]:
+                    existing = conn.execute("SELECT * FROM products WHERE barcode=?", (item["barcode"],)).fetchone()
+                if not existing and item["sku"]:
+                    existing = conn.execute("SELECT * FROM products WHERE sku=?", (item["sku"],)).fetchone()
                 if existing:
-                    new_stock = stock if stock is not None else existing["stock"]
+                    new_stock = item["stock"] if item["stock"] is not None else existing["stock"]
                     conn.execute(
                         """UPDATE products SET name=?, sku=?, barcode=?, price=?, cost=?, stock=?, image=COALESCE(?, image),
                            tax_code=COALESCE(?, tax_code), active=1, updated_at=? WHERE id=?""",
-                        (name, sku or existing["sku"], barcode or existing["barcode"], price, cost, new_stock, image, tax_code, iso(), existing["id"]),
+                        (item["name"], item["sku"] or existing["sku"], item["barcode"] or existing["barcode"], item["price"], item["cost"], new_stock, item["image"], item["tax_code"], iso(), existing["id"]),
                     )
-                    if price != existing["price"]:
-                        log_stock(conn, existing["id"], "price", 0, existing["price"], price, "ورود اکسل", user["id"])
+                    if item["price"] != existing["price"]:
+                        log_stock(conn, existing["id"], "price", 0, existing["price"], item["price"], "ورود اکسل", user["id"])
                     if new_stock != existing["stock"]:
                         log_stock(conn, existing["id"], "adjust", new_stock - existing["stock"], existing["stock"], new_stock, "ورود اکسل", user["id"])
                     updated += 1
                     ids.append(existing["id"])
                 else:
-                    initial = stock or 0
+                    initial = item["stock"] or 0
                     cur = conn.execute(
                         """INSERT INTO products (name, sku, barcode, price, cost, stock, image, tax_code, woo_id, active, created_at, updated_at)
                            VALUES (?,?,?,?,?,?,?,?,NULL,1,?,?)""",
-                        (name, sku, barcode, price, cost, initial, image, tax_code, iso(), iso()),
+                        (item["name"], item["sku"], item["barcode"], item["price"], item["cost"], initial, item["image"], item["tax_code"], iso(), iso()),
                     )
                     if initial:
                         log_stock(conn, cur.lastrowid, "adjust", initial, 0, initial, "ورود اکسل", user["id"])
                     created += 1
                     ids.append(cur.lastrowid)
             except AppError as exc:
-                errors.append({"row": index, "error": str(exc)})
+                errors.append({"row": item["row"], "error": str(exc)})
             except sqlite3.IntegrityError:
-                errors.append({"row": index, "error": "کد یا بارکد تکراری است"})
-    return jsonify(created=created, updated=updated, errors=errors, ids=ids)
+                errors.append({"row": item["row"], "error": "کد یا بارکد تکراری است"})
+    return {"created": created, "updated": updated, "errors": errors, "ids": ids}
+
+
+@app.post("/api/products/preview")
+def preview_products():
+    require_admin()
+    parsed, errors = read_product_sheet(request.files.get("file"))
+    preview = [{
+        "name": item["name"],
+        "sku": item["sku"] or "",
+        "stock": 0 if item["stock"] is None else item["stock"],
+        "price": item["price"],
+    } for item in parsed[:8]]
+    return jsonify(total=len(parsed), preview=preview, errors=errors[:30], error_count=len(errors))
+
+
+@app.post("/api/products/import")
+def import_products():
+    user = require_admin()
+    parsed, errors = read_product_sheet(request.files.get("file"))
+    saved = save_imported_products(user, parsed)
+    saved["errors"] = (errors + saved["errors"])[:40]
+    return jsonify(saved)
 
 
 @app.post("/api/products/woo/push")

@@ -250,6 +250,54 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(removed.status_code, 200)
         self.assertEqual(self.client.get("/api/products").get_json()["products"], [])
 
+    def test_excel_preview_then_save_shop_columns(self):
+        book = Workbook()
+        sheet = book.active
+        sheet.append(["نام کالا", "SKU", "موجودی", "قیمت فروش"])
+        sheet.append(["بلوز شلوار دایناسور", 1001, 0, 0])
+        sheet.append(["بلوز شلوار تراکتور", 1007, 0, 220000])
+        for index in range(3, 41):
+            sheet.append([f"کالای {index}", 2000 + index, index, 0])
+        buf = io.BytesIO()
+        book.save(buf)
+        payload = buf.getvalue()
+        preview = self.client.post(
+            "/api/products/preview",
+            data={"file": (io.BytesIO(payload), "Daftarchi-sample.xlsx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(preview.status_code, 200, preview.get_json())
+        body = preview.get_json()
+        self.assertEqual(body["total"], 40)
+        self.assertEqual(body["preview"][0]["name"], "بلوز شلوار دایناسور")
+        self.assertEqual(body["preview"][0]["sku"], "1001")
+        self.assertEqual(body["preview"][0]["price"], 0)
+        self.assertEqual(body["preview"][1]["price"], 220000)
+        self.assertEqual(self.client.get("/api/products").get_json()["products"], [])
+        saved = self.client.post(
+            "/api/products/import",
+            data={"file": (io.BytesIO(payload), "Daftarchi-sample.xlsx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(saved.status_code, 200, saved.get_json())
+        result = saved.get_json()
+        self.assertEqual(result["created"], 40)
+        self.assertEqual(result["updated"], 0)
+        self.assertEqual(result["errors"], [])
+        self.assertIn("created", result)
+        products = self.client.get("/api/products").get_json()["products"]
+        self.assertEqual(len(products), 40)
+        tractor = next(item for item in products if item["sku"] == "1007")
+        self.assertEqual(tractor["name"], "بلوز شلوار تراکتور")
+        self.assertEqual(tractor["price"], 220000)
+        again = self.client.post(
+            "/api/products/import",
+            data={"file": (io.BytesIO(payload), "Daftarchi-sample.xlsx")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(again.get_json()["updated"], 40)
+        self.assertEqual(len(self.client.get("/api/products").get_json()["products"]), 40)
+
     def test_password_reset_and_cashier(self):
         forgot = self.client.post("/api/auth/forgot", json={"ident": "09120000000"})
         self.assertEqual(forgot.status_code, 200, forgot.get_json())
@@ -822,7 +870,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.0.13")
+        self.assertEqual(appmod.APP_VERSION, "1.0.14")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -847,13 +895,15 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
-        self.assertIn("1.0.13", run)
+        self.assertIn("1.0.14", run)
         self.assertIn("invoice-edge", script)
         self.assertIn("نوع متغیر را انتخاب کنید", script)
         self.assertIn("همین مقدارهای نوشته‌شده", script)
         self.assertIn("کادر Consumer key خالی است", script)
         self.assertIn("class=\"webapp\"", script)
         self.assertIn("data-act=\"more\"", script)
+        self.assertIn("data-act=\"commit-import\"", script)
+        self.assertIn("نام کالا", script)
         page = Path("/workspace/templates/index.html").read_text(encoding="utf-8")
         self.assertIn("/manifest.webmanifest", page)
         self.assertIn("/sw.js", page)
@@ -874,7 +924,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.0.13")
+        self.assertEqual(boot["version"], "1.0.14")
         home = self.client.get("/")
         self.assertIn("manifest.webmanifest", home.get_data(as_text=True))
         manifest = json.loads(self.client.get("/manifest.webmanifest").get_data(as_text=True))
@@ -883,7 +933,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(manifest["name"], "دفترچی")
         worker = self.client.get("/sw.js")
         self.assertEqual(worker.status_code, 200)
-        self.assertIn("daftarchi-1.0.13", worker.get_data(as_text=True))
+        self.assertIn("daftarchi-1.0.14", worker.get_data(as_text=True))
         pay = Path("/workspace/site-updates/daftarchi/pay.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-pay", pay)
         self.assertIn("gateway.zibal.ir/v1/request", pay)

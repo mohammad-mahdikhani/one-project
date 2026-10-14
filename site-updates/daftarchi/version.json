@@ -1,5 +1,5 @@
 {
-  "version": "1.0.13",
+  "version": "1.0.14",
   "url": "https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi.exe",
-  "notes": "دفترچی وب‌اپ شد. نوار فروش سبک است و پوسته صفحه دیگر از نو ساخته نمی‌شود. روی گوشی می‌توان آن را مثل اپ به صفحه اصلی اضافه کرد."
+  "notes": "ورود اکسل اول پیش‌نمایش می‌شود. ستون‌های نام کالا، SKU، موجودی و قیمت فروش ذخیره می‌شوند، حتی اگر قیمت صفر باشد."
 }

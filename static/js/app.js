@@ -61,6 +61,7 @@ const state = {
   settings: null,
   users: [],
   importResult: null,
+  importFile: null,
 };
 
 const $app = () => document.getElementById("app");
@@ -641,10 +642,10 @@ function productsHtml() {
     <section class="card"><div class="row-actions">
       <button type="button" class="btn primary" data-act="new-product">کالای جدید</button>
       <a class="btn" href="/api/products/template">نمونه اکسل</a>
-      <label class="btn">ورود اکسل<input id="excel-file" type="file" accept=".xlsx" hidden data-act="import-excel"></label>
+      <button type="button" class="btn" data-act="open-import">ورود با اکسل</button>
       <button type="button" class="btn" data-act="woo-push">ارسال همه به ووکامرس</button>
       <button type="button" class="btn" data-act="woo-pull">دریافت از ووکامرس</button>
-    </div><p class="hint">ستون‌های اکسل: نام، کد، بارکد، قیمت، موجودی، قیمت خرید، تصویر، شناسه مودیان. سرستون انگلیسی هم قبول است. تصویر محلی فقط داخل دفترچی می‌ماند؛ ووکامرس آدرس اینترنتی می‌خواهد. کالای متغیر یک ردیف می‌ماند و نوع و موجودی هر متغیر زیر همان نام می‌آید.</p></section>
+    </div><p class="hint">ستون‌های اکسل: نام کالا، SKU، موجودی، قیمت فروش. بارکد، قیمت خرید، تصویر و شناسه مودیان هم اگر باشند خوانده می‌شوند. اول پیش‌نمایش می‌آید و با دکمه ثبت، کالاها ذخیره می‌شوند.</p></section>
     <section class="card"><input id="product-query" value="${esc(state.productQuery)}" placeholder="جستجو"><div id="product-table">${productRows()}</div></section>
   </div>`;
 }
@@ -872,10 +873,30 @@ function modalHtml() {
     inner = `<h2 class="section-title">پرداخت لایسنس در زیبال</h2><p>${esc(lic.title)} · ${esc(lic.buyer_name)} · ${money(lic.payable)}</p>${lic.pay_url ? `<p><a href="${esc(lic.pay_url)}" target="_blank" rel="noopener">باز کردن صفحه زیبال</a></p>` : ""}<div class="row-actions"><button type="button" class="btn primary" data-act="verify-license" data-id="${lic.id}">استعلام تأیید</button><button type="button" class="btn danger" data-act="cancel-license" data-id="${lic.id}">لغو</button></div><form data-act="manual-license"><input type="hidden" name="id" value="${lic.id}"><div class="field"><label>اگر در پنل زیبال پرداخت را دیدید، پیگیری را بنویسید</label><input name="ref" required></div><button class="btn" type="submit">ثبت دستی</button></form>`;
   }
   if (modal.type === "receipt") inner = receiptHtml(modal);
+  if (modal.type === "import") {
+    const preview = modal.preview;
+    const rows = preview?.preview || [];
+    const table = rows.length ? `<table><thead><tr><th>نام کالا</th><th>SKU</th><th>موجودی</th><th>قیمت فروش</th></tr></thead><tbody>
+      ${rows.map((item) => `<tr><td>${esc(item.name)}</td><td class="ltr">${esc(item.sku || "—")}</td><td class="num">${num(item.stock)}</td><td class="num">${num(item.price)}</td></tr>`).join("")}
+    </tbody></table>` : "";
+    const problems = preview?.error_count ? `<p class="hint">${num(preview.error_count)} ردیف رد می‌شود. ${preview.errors.slice(0, 3).map((row) => `ردیف ${num(row.row)}: ${esc(row.error)}`).join(" · ")}</p>` : "";
+    inner = `<h2 class="section-title">ورود محصولات با فایل اکسل</h2>
+      <div class="row-actions">
+        <label class="btn">انتخاب فایل<input id="excel-file" type="file" accept=".xlsx,.xlsm" hidden></label>
+        <a class="btn" href="/api/products/template">دانلود قالب نمونه اکسل</a>
+      </div>
+      <p class="hint">${modal.name ? esc(modal.name) : "ستون‌ها را مثل قالب بگذارید: نام کالا، SKU، موجودی، قیمت فروش. قیمت صفر هم ذخیره می‌شود."}</p>
+      ${preview ? `<p>پیش‌نمایش ${num(rows.length)} ردیف از ${num(preview.total)} کالا</p>${table}${problems}` : ""}
+      <div class="row-actions">
+        <button type="button" class="btn primary" data-act="commit-import" ${preview?.total ? "" : "disabled"}>ثبت ${num(preview?.total || 0)} کالا</button>
+        <button type="button" class="btn" data-act="close-modal">انصراف</button>
+      </div>`;
+  }
   if (modal.type === "password") inner = `<form data-act="change-password"><h2 class="section-title">تغییر رمز</h2><div class="field"><label>رمز فعلی</label><input type="password" name="current" required></div><div class="field"><label>رمز جدید</label><input type="password" name="password" minlength="6" required></div><button class="btn primary" type="submit">ذخیره</button></form>
     <form data-act="attach-email"><h2 class="section-title">ورود با جیمیل</h2><p class="hint">همین جیمیل را ذخیره کنید و بعد با آن وارد شوید.</p><div class="field"><label>جیمیل</label><input class="ltr" name="email" type="email" value="${esc(state.user.email || "")}" required placeholder="name@gmail.com"></div><button class="btn primary" type="submit">ذخیره جیمیل</button></form>
     <form data-act="verify-email"><div class="field"><label>کد ۶ رقمی جیمیل</label><input class="ltr" name="code" inputmode="numeric" required></div><button class="btn" type="submit">تأیید جیمیل</button></form>`;
-  return `<div class="modal-back" data-act="close-modal"><div class="modal card ${modal.type === "receipt" ? "invoice-modal" : ""}" data-act="stop"><div class="row-actions"><button type="button" class="btn" data-act="close-modal">بستن</button></div>${inner}</div></div>`;
+  const wide = modal.type === "receipt" ? "invoice-modal" : (modal.type === "import" ? "import-modal" : "");
+  return `<div class="modal-back" data-act="close-modal"><div class="modal card ${wide}" data-act="stop"><div class="row-actions"><button type="button" class="btn" data-act="close-modal">بستن</button></div>${inner}</div></div>`;
 }
 
 function pageHtml() {
@@ -1267,6 +1288,21 @@ async function onClick(event) {
       } else await submitSale(el.dataset.method, "");
     } else if (act === "confirm-card") {
       await submitSale("card", document.getElementById("pos-ref")?.value || "");
+    } else if (act === "open-import") {
+      state.modal = { type: "import", name: "", preview: null };
+      render();
+    } else if (act === "commit-import") {
+      if (!state.importFile || !state.modal?.preview?.total) return toast("اول فایل اکسل را انتخاب کنید");
+      const body = new FormData();
+      body.append("file", state.importFile);
+      const result = await api("/api/products/import", { method: "POST", form: body });
+      state.importResult = result;
+      state.importFile = null;
+      state.modal = null;
+      await loaders.products();
+      const saved = (result.created || 0) + (result.updated || 0);
+      toast(result.errors?.length ? `${num(saved)} کالا ثبت شد و ${num(result.errors.length)} ردیف رد شد` : `${num(saved)} کالا ثبت شد`);
+      render();
     } else if (act === "new-product") { state.modal = { type: "product", product: null }; render(); }
     else if (act === "edit-product") {
       state.modal = { type: "product", product: state.products.find((item) => item.id === Number(el.dataset.id)) };
@@ -1381,12 +1417,12 @@ function onChange(event) {
   if (event.target.id === "discount-type") refreshPayable();
   if (event.target.id === "excel-file" && event.target.files[0]) {
     const file = event.target.files[0];
+    state.importFile = file;
     guard(async () => {
       const body = new FormData();
       body.append("file", file);
-      state.importResult = await api("/api/products/import", { method: "POST", form: body });
-      await loaders.products();
-      toast("فایل اکسل خوانده شد");
+      const preview = await api("/api/products/preview", { method: "POST", form: body });
+      state.modal = { type: "import", name: file.name, preview };
       render();
     });
   }
