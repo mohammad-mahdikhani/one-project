@@ -85,7 +85,7 @@ DEFAULT_SETTINGS = {
     "price_3m": "6000000",
     "price_6m": "12000000",
     "price_12m": "15000000",
-    "price_50y": "12000000",
+    "price_50y": "15000000",
     "cap_50y": "50",
     "must_change_password": "1",
     "moadian_fiscal_id": "",
@@ -104,7 +104,7 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.1.3"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -1739,20 +1739,27 @@ def explain_host_pay(detail: str) -> str:
 
 def host_pay(action: str, fields: dict) -> dict:
     payload = {"key": HOST_MAIL_KEY, "action": action, **fields}
-    last_status, last_body = 404, {"error": "HTTP 404"}
+    failures = []
     for url in HOST_PAY_URLS:
         try:
             status, body = http_request("POST", url, payload=payload, timeout=20)
         except AppError as exc:
-            last_status, last_body = 502, {"error": str(exc)}
+            failures.append(str(exc))
             continue
-        last_status, last_body = status, body if isinstance(body, dict) else {"error": "HTTP " + str(status)}
-        if status < 400 and isinstance(body, dict) and body.get("ok") and body.get("service") == "daftarchi-pay":
+        if not isinstance(body, dict):
+            failures.append(f"HTTP {status}")
+            continue
+        if status < 400 and body.get("ok") and body.get("service") == "daftarchi-pay":
             return body
-    detail = ""
-    if isinstance(last_body, dict):
-        detail = str(last_body.get("error") or last_body.get("message") or "")
-    raise AppError(explain_host_pay(detail or f"HTTP {last_status}"), 502)
+        # A live pay.php answered. A later 404 page must not replace this error.
+        if body.get("service") == "daftarchi-pay" or isinstance(body.get("ok"), bool):
+            detail = str(body.get("error") or body.get("message") or f"HTTP {status}")
+            raise AppError(explain_host_pay(detail), 502)
+        failures.append(str(body.get("error") or body.get("message") or f"HTTP {status}"))
+    detail = next((item for item in failures if "invalid ip" in item.lower()), "")
+    if not detail:
+        detail = failures[-1] if failures else "HTTP 404"
+    raise AppError(explain_host_pay(detail), 502)
 
 
 def webakery_payment(settings: dict, order_id: int, title: str, payable: int, buyer: str, phone: str) -> tuple[str, str, str]:
@@ -2181,6 +2188,9 @@ def init_db():
         if merchant_row and merchant_row["value"] == ZIBAL_LICENSE_MERCHANT and gateway_row and gateway_row["value"] != "zibal":
             conn.execute("UPDATE settings SET value='zibal' WHERE key='gateway'")
             conn.execute("UPDATE settings SET value='0' WHERE key='gateway_sandbox'")
+        price_50 = conn.execute("SELECT value FROM settings WHERE key='price_50y'").fetchone()
+        if price_50 and str(price_50["value"]).strip() == "12000000":
+            conn.execute("UPDATE settings SET value='15000000' WHERE key='price_50y'")
         have = {row["name"] for row in conn.execute("PRAGMA table_info(licenses)")}
         if "status" not in have:
             conn.execute("ALTER TABLE licenses ADD COLUMN status TEXT NOT NULL DEFAULT 'paid'")

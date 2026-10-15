@@ -344,7 +344,6 @@ summary { cursor: pointer; font-weight: 600; }
 .seg { display: flex; gap: 4px; background: var(--bg); border-radius: 12px; padding: 4px; }
 .seg button { flex: 1; border: 0; background: transparent; border-radius: 10px; padding: 8px; color: var(--muted); }
 .seg button.on { background: var(--paper); color: var(--accent-ink); font-weight: 600; }
-.catalog { margin-top: 10px; }
 .more-rows { margin: 12px 0 0; }
 .tile, #product-table tr, #inventory-box tr { content-visibility: auto; contain-intrinsic-size: auto 72px; }
 .chat-log { display: grid; gap: 8px; max-height: 240px; overflow: auto; }
@@ -353,7 +352,6 @@ summary { cursor: pointer; font-weight: 600; }
 .bubble p { margin: 0; }
 .update-stats { grid-template-columns: 1fr 1fr; }
 @media (max-width: 860px) {
-  .catalog { display: grid; grid-template-columns: 1fr 1fr; }
   .dock { bottom: calc(74px + env(safe-area-inset-bottom)); }
   .support-sheet { bottom: calc(128px + env(safe-area-inset-bottom)); inset-inline-start: 12px; width: auto; inset-inline-end: 12px; }
   #toast { bottom: calc(132px + env(safe-area-inset-bottom)); }

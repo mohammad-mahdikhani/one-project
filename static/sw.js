@@ -1,4 +1,4 @@
-const CACHE = "daftarchi-1.1.2";
+const CACHE = "daftarchi-1.1.3";
 const FILES = [
   "/static/css/app.css",
   "/static/js/app.js",

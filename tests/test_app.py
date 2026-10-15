@@ -201,7 +201,7 @@ class DaftarchiTest(unittest.TestCase):
             "discount_type": "amount", "discount_value": 2000000, "payment_method": "cash",
         })
         self.assertEqual(first.status_code, 200, first.get_json())
-        self.assertEqual(first.get_json()["payable"], 10000000)
+        self.assertEqual(first.get_json()["payable"], 13000000)
         second = self.client.post("/api/licenses", json={
             "plan": "50y", "buyer_name": "فروشگاه ب", "phone": "09120002222", "payment_method": "cash",
         })
@@ -210,11 +210,25 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(plans["3m"]["price"], 6000000)
         self.assertEqual(plans["6m"]["price"], 12000000)
         self.assertEqual(plans["12m"]["price"], 15000000)
-        self.assertEqual(plans["50y"]["price"], 12000000)
+        self.assertEqual(plans["50y"]["price"], 15000000)
         self.assertEqual(plans["50y"]["remaining"], 0)
         books = self.accounts()
         self.assertEqual(books["4200"]["amount"], 0)
         self.assertEqual(books["1000"]["amount"], 0)
+
+    def test_old_fifty_year_price_moves_to_fifteen_million(self):
+        with appmod.connect() as conn:
+            conn.execute("UPDATE settings SET value='12000000' WHERE key='price_50y'")
+            conn.execute("UPDATE settings SET value='9000000' WHERE key='price_6m'")
+        appmod.init_db()
+        plans = {row["id"]: row for row in self.client.get("/api/licenses").get_json()["plans"]}
+        self.assertEqual(plans["50y"]["price"], 15000000)
+        self.assertEqual(plans["6m"]["price"], 9000000)
+        with appmod.connect() as conn:
+            conn.execute("UPDATE settings SET value='18000000' WHERE key='price_50y'")
+        appmod.init_db()
+        again = {row["id"]: row for row in self.client.get("/api/licenses").get_json()["plans"]}
+        self.assertEqual(again["50y"]["price"], 18000000)
 
     def test_archived_barcode_can_be_used_again(self):
         product = self.add_product()
@@ -618,7 +632,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertIn("api.telegram.org/bot" + token + "/sendMessage", seen["url"])
         self.assertEqual(seen["chat"], "55001")
         self.assertIn("صندوق بسته ماند", seen["text"])
-        self.assertIn("1.1.2", seen["text"])
+        self.assertIn("1.1.3", seen["text"])
         listed = self.client.get("/api/support/messages").get_json()["messages"]
         self.assertEqual(listed[-1]["body"], "صندوق بسته ماند")
         self.assertEqual(listed[-1]["delivery"], "telegram")
@@ -1024,6 +1038,19 @@ class DaftarchiTest(unittest.TestCase):
             self.assertEqual(denied.status_code, 502)
             self.assertIn("203.0.113.8", denied.get_json()["error"])
             self.assertIn("هاست", denied.get_json()["error"])
+
+            def masked(method, url, payload=None, headers=None, form=None, timeout=12):
+                if str(url).endswith("/license-server/pay.php"):
+                    return 502, {"ok": False, "service": "daftarchi-pay", "error": "invalid IP 198.51.100.9"}
+                return 404, {"raw": "<html>Page Not Found</html>"}
+
+            appmod.http_request = masked
+            hidden = self.client.post("/api/licenses", json={
+                "plan": "12m", "buyer_name": "خطای واقعی", "phone": "09120003333", "payment_method": "gateway",
+            })
+            self.assertEqual(hidden.status_code, 502)
+            self.assertIn("198.51.100.9", hidden.get_json()["error"])
+            self.assertNotIn("pay.php روی هاست نیست", hidden.get_json()["error"])
             rows = self.client.get("/api/licenses").get_json()["licenses"]
             self.assertTrue(all(row["buyer_name"] != "بدون آی‌پی" or row["status"] == "canceled" for row in rows))
         finally:
@@ -1211,7 +1238,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.1.2")
+        self.assertEqual(appmod.APP_VERSION, "1.1.3")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -1236,7 +1263,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
-        self.assertIn("1.1.2", run)
+        self.assertIn("1.1.3", run)
         self.assertIn("invoice-edge", script)
         self.assertIn("نوع متغیر را انتخاب کنید", script)
         self.assertIn("همین مقدارهای نوشته‌شده", script)
@@ -1249,10 +1276,11 @@ class DaftarchiTest(unittest.TestCase):
         self.assertIn("ارسال به تلگرام", script)
         self.assertIn("گزارش این خطا", script)
         self.assertIn("data-act=\"check-update\"", script)
-        self.assertIn("data-act=\"catalog-filter\"", script)
+        self.assertNotIn("catalog-filter", script)
+        self.assertNotIn("حمام", script)
+        self.assertIn("ستون‌های اکسل: نام کالا، SKU، موجودی، قیمت فروش.", script)
         self.assertIn("more-products", script)
         self.assertIn("loading=\"lazy\"", script)
-        self.assertIn("تصفیه هوا", script)
         page = Path("/workspace/templates/index.html").read_text(encoding="utf-8")
         self.assertIn("/manifest.webmanifest", page)
         self.assertIn("/sw.js", page)
@@ -1273,7 +1301,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.1.2")
+        self.assertEqual(boot["version"], "1.1.3")
         home = self.client.get("/")
         self.assertIn("manifest.webmanifest", home.get_data(as_text=True))
         manifest = json.loads(self.client.get("/manifest.webmanifest").get_data(as_text=True))
@@ -1282,7 +1310,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(manifest["name"], "دفترچی")
         worker = self.client.get("/sw.js")
         self.assertEqual(worker.status_code, 200)
-        self.assertIn("daftarchi-1.1.2", worker.get_data(as_text=True))
+        self.assertIn("daftarchi-1.1.3", worker.get_data(as_text=True))
         relay = Path("/workspace/site-updates/daftarchi/telegram.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-telegram", relay)
         self.assertIn("telegram.json", relay)

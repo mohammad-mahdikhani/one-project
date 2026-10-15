@@ -38,7 +38,6 @@ const state = {
   focusBarcode: false,
   products: [],
   productQuery: "",
-  catalog: "",
   posLimit: PAGE_SIZE,
   productLimit: PAGE_SIZE,
   inventoryLimit: PAGE_SIZE,
@@ -683,26 +682,14 @@ function posHtml() {
   </div>`;
 }
 
-const FAMILY = { water: "تصفیه آب", air: "تصفیه هوا", bath: "حمام" };
-function familyPill(product) {
-  const label = FAMILY[product.family];
-  return label ? ` <span class="pill">${label}</span>` : "";
-}
 function productRows() {
   const query = state.productQuery.trim();
-  const rows = state.products.filter((product) => {
-    if (state.catalog && product.family !== state.catalog) return false;
-    return !query || (product.hay || productHaystack(product)).includes(query);
-  });
+  const rows = state.products.filter((product) => !query || (product.hay || productHaystack(product)).includes(query));
   if (!rows.length) return `<p class="empty">کالایی در این فهرست نیست.</p>`;
   const shown = rows.slice(0, state.productLimit);
   return `<table><thead><tr><th></th><th>نام</th><th>بارکد</th><th>مودیان</th><th>قیمت فروش</th><th>موجودی</th><th></th></tr></thead><tbody>
-    ${shown.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}${familyPill(product)}${product.woo_id ? ` <span class="pill">ووکامرس</span>` : ""}${product.type === "variable" ? ` <span class="pill">متغیر</span>` : ""}${variationLines(product)}</td><td class="ltr">${esc(product.barcode || "—")}</td><td class="ltr">${esc(product.tax_code || "—")}</td><td class="num">${product.type === "variable" ? `از ${money(product.price)}` : money(product.price)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td><td class="row-actions"><button type="button" class="btn" data-act="edit-product" data-id="${product.id}">ویرایش</button><button type="button" class="btn danger" data-act="archive-product" data-id="${product.id}">بایگانی</button></td></tr>`).join("")}
+    ${shown.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}${product.woo_id ? ` <span class="pill">ووکامرس</span>` : ""}${product.type === "variable" ? ` <span class="pill">متغیر</span>` : ""}${variationLines(product)}</td><td class="ltr">${esc(product.barcode || "—")}</td><td class="ltr">${esc(product.tax_code || "—")}</td><td class="num">${product.type === "variable" ? `از ${money(product.price)}` : money(product.price)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td><td class="row-actions"><button type="button" class="btn" data-act="edit-product" data-id="${product.id}">ویرایش</button><button type="button" class="btn danger" data-act="archive-product" data-id="${product.id}">بایگانی</button></td></tr>`).join("")}
   </tbody></table>${moreControl("more-products", rows.length, state.productLimit)}`;
-}
-function catalogChips() {
-  const chips = [["", "همه"], ["water", "تصفیه آب"], ["air", "تصفیه هوا"], ["bath", "حمام"]];
-  return chips.map(([id, label]) => `<button type="button" class="${state.catalog === id ? "on" : ""}" data-act="catalog-filter" data-family="${id}">${label}</button>`).join("");
 }
 function productsHtml() {
   const imported = state.importResult;
@@ -717,8 +704,7 @@ function productsHtml() {
       <button type="button" class="btn" data-act="open-import">ورود با اکسل</button>
       <button type="button" class="btn" data-act="woo-push">ارسال همه به ووکامرس</button>
       <button type="button" class="btn" data-act="woo-pull">دریافت از ووکامرس</button>
-    </div><p class="hint">ستون‌های اکسل: نام کالا، SKU، موجودی، قیمت فروش. فیلتر تصفیه آب، تصفیه هوا و حمام یکی نمی‌شوند. اینچ، میکرون، جنس و کد لاین باید همان باشد. اگر همان کالا در سایت کد نداشته باشد، کد دفترچی روی همان محصول نوشته می‌شود و هر بخشی که ووکامرس تأیید کند می‌ماند.</p>
-    <div class="seg catalog" id="catalog-chips">${catalogChips()}</div></section>
+    </div><p class="hint">ستون‌های اکسل: نام کالا، SKU، موجودی، قیمت فروش.</p></section>
     <section class="card"><input id="product-query" value="${esc(state.productQuery)}" placeholder="جستجو"><div id="product-table">${productRows()}</div></section>
   </div>`;
 }
@@ -1374,16 +1360,6 @@ async function onClick(event) {
     if (act === "more-inventory") state.inventoryLimit += PAGE_SIZE;
     const box = document.getElementById(act === "more-pos" ? "pos-grid" : act === "more-inventory" ? "inventory-box" : "product-table");
     if (box) box.innerHTML = act === "more-pos" ? posTiles() : act === "more-inventory" ? inventoryTable() : productRows();
-    return;
-  }
-  if (act === "catalog-filter") {
-    state.catalog = el.dataset.family || "";
-    state.productLimit = PAGE_SIZE;
-    document.querySelectorAll("[data-act=catalog-filter]").forEach((button) => {
-      button.classList.toggle("on", (button.dataset.family || "") === state.catalog);
-    });
-    const box = document.getElementById("product-table");
-    if (box) box.innerHTML = productRows();
     return;
   }
   await guard(async () => {
