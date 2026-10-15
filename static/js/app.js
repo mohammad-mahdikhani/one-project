@@ -18,6 +18,7 @@ const PAY = { cash: "نقد", card: "کارت", gateway: "درگاه وب‌بی
 const LICENSE_STATUS = { paid: "پرداخت‌شده", pending: "در انتظار پرداخت", canceled: "لغو" };
 const TYPES = { asset: "دارایی", liability: "بدهی", equity: "سرمایه", income: "درآمد", expense: "هزینه", person: "شخص" };
 const KINDS = { sale: "فروش", purchase: "خرید", adjust: "تعدیل", price: "تغییر قیمت" };
+const PAGE_SIZE = 60;
 
 const state = {
   user: null,
@@ -38,6 +39,10 @@ const state = {
   products: [],
   productQuery: "",
   catalog: "",
+  posLimit: PAGE_SIZE,
+  productLimit: PAGE_SIZE,
+  inventoryLimit: PAGE_SIZE,
+  inventoryQuery: "",
   cart: [],
   discountType: "amount",
   discountValue: "",
@@ -76,11 +81,12 @@ function esc(value) {
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
   }[ch]));
 }
+const numberFormat = new Intl.NumberFormat("fa-IR");
 function money(value) {
-  return `${new Intl.NumberFormat("fa-IR").format(Math.round(Number(value) || 0))} تومان`;
+  return `${numberFormat.format(Math.round(Number(value) || 0))} تومان`;
 }
 function num(value) {
-  return new Intl.NumberFormat("fa-IR").format(Number(value) || 0);
+  return numberFormat.format(Number(value) || 0);
 }
 function asInt(value) {
   const clean = String(value ?? "")
@@ -98,7 +104,7 @@ function safeImg(src) {
 function thumb(src, alt, small) {
   const safe = safeImg(src);
   if (!safe) return `<span class="ph ${small ? "sm" : ""}"></span>`;
-  return `<img class="${small ? "thumb sm" : ""}" src="${esc(safe)}" alt="${esc(alt || "")}">`;
+  return `<img class="${small ? "thumb sm" : ""}" src="${esc(safe)}" alt="${esc(alt || "")}" loading="lazy" decoding="async">`;
 }
 function remedyFor(message) {
   const text = String(message || "");
@@ -192,28 +198,32 @@ async function guard(fn) {
 
 const loaders = {
   async dashboard() {
-    await loadUpdate();
+    const updatePromise = loadUpdate();
     const [summary, sales, registerInfo] = await Promise.all([
       api("/api/reports/summary"), api("/api/sales?limit=8"), api("/api/register"),
     ]);
     state.dashboard = summary;
     state.sales = sales.sales;
     state.registerInfo = registerInfo;
+    updatePromise.then(() => { if (state.page === "dashboard") paintChrome(); });
   },
   async pos() {
     const [products, pending, registerInfo] = await Promise.all([
       api("/api/products"), api("/api/sales?status=pending&limit=20"), api("/api/register"),
     ]);
-    state.products = products.products;
+    state.products = stampProducts(products.products);
+    state.posLimit = PAGE_SIZE;
     state.pending = pending.sales;
     state.registerInfo = registerInfo;
     syncCartStock();
   },
   async products() {
-    state.products = (await api("/api/products")).products;
+    state.products = stampProducts((await api("/api/products")).products);
+    state.productLimit = PAGE_SIZE;
   },
   async inventory() {
     state.inventory = await api("/api/inventory");
+    state.inventoryLimit = PAGE_SIZE;
   },
   async accounts() {
     const [accounts, journal] = await Promise.all([
@@ -237,10 +247,11 @@ const loaders = {
     state.sms = (await api("/api/sms")).messages;
   },
   async settings() {
-    await loadUpdate();
+    const updatePromise = loadUpdate();
     const [settings, users] = await Promise.all([api("/api/settings"), api("/api/users")]);
     state.settings = settings.settings;
     state.users = users.users;
+    updatePromise.then(() => { if (state.page === "settings") paintChrome(); });
   },
 };
 
@@ -591,6 +602,15 @@ function productHaystack(product) {
   const extra = (product.variations || []).map((item) => `${item.label} ${item.sku} ${item.barcode}`).join(" ");
   return `${product.name} ${product.barcode} ${product.sku} ${product.tax_code || ""} ${extra}`;
 }
+function stampProducts(rows) {
+  rows.forEach((product) => { product.hay = productHaystack(product); });
+  return rows;
+}
+function moreControl(act, total, limit) {
+  if (total <= limit) return "";
+  const next = Math.min(PAGE_SIZE, total - limit);
+  return `<p class="more-rows"><button type="button" class="btn" data-act="${act}">نمایش ${num(next)} تای بعدی · ${num(limit)} از ${num(total)}</button></p>`;
+}
 function variationLines(product) {
   if (product.type !== "variable" || !product.variations?.length) return "";
   return `<div class="var-list">${product.variations.map((item) => `<div class="var-line"><span>${esc(item.label)}</span><span class="num">${item.tracked ? `موجودی ${num(item.stock)}` : (item.in_stock ? "موجود" : "ناموجود")}</span><span class="num">${money(item.price)}</span></div>`).join("")}</div>`;
@@ -605,9 +625,10 @@ function stockChoices(products) {
 }
 function posTiles() {
   const query = state.posQuery.trim();
-  const rows = state.products.filter((product) => !query || productHaystack(product).includes(query));
+  const rows = state.products.filter((product) => !query || (product.hay || productHaystack(product)).includes(query));
   if (!rows.length) return `<p class="empty">کالایی پیدا نشد.</p>`;
-  return `<div class="product-grid">${rows.map((product) => {
+  const shown = rows.slice(0, state.posLimit);
+  return `<div class="product-grid">${shown.map((product) => {
     const variable = product.type === "variable" && product.variations?.length;
     const sellable = variable ? product.variations.some((item) => item.in_stock) : product.stock > 0;
     const price = variable ? `از ${money(product.price)}` : money(product.price);
@@ -618,7 +639,7 @@ function posTiles() {
     <span class="num">${price}</span>
     <span class="pstock">${stock}${product.low ? " · کم" : ""}</span>
   </button>`;
-  }).join("")}</div>`;
+  }).join("")}</div>${moreControl("more-pos", rows.length, state.posLimit)}`;
 }
 function posHtml() {
   const subtotal = cartSubtotal();
@@ -671,12 +692,13 @@ function productRows() {
   const query = state.productQuery.trim();
   const rows = state.products.filter((product) => {
     if (state.catalog && product.family !== state.catalog) return false;
-    return !query || productHaystack(product).includes(query);
+    return !query || (product.hay || productHaystack(product)).includes(query);
   });
   if (!rows.length) return `<p class="empty">کالایی در این فهرست نیست.</p>`;
+  const shown = rows.slice(0, state.productLimit);
   return `<table><thead><tr><th></th><th>نام</th><th>بارکد</th><th>مودیان</th><th>قیمت فروش</th><th>موجودی</th><th></th></tr></thead><tbody>
-    ${rows.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}${familyPill(product)}${product.woo_id ? ` <span class="pill">ووکامرس</span>` : ""}${product.type === "variable" ? ` <span class="pill">متغیر</span>` : ""}${variationLines(product)}</td><td class="ltr">${esc(product.barcode || "—")}</td><td class="ltr">${esc(product.tax_code || "—")}</td><td class="num">${product.type === "variable" ? `از ${money(product.price)}` : money(product.price)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td><td class="row-actions"><button type="button" class="btn" data-act="edit-product" data-id="${product.id}">ویرایش</button><button type="button" class="btn danger" data-act="archive-product" data-id="${product.id}">بایگانی</button></td></tr>`).join("")}
-  </tbody></table>`;
+    ${shown.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}${familyPill(product)}${product.woo_id ? ` <span class="pill">ووکامرس</span>` : ""}${product.type === "variable" ? ` <span class="pill">متغیر</span>` : ""}${variationLines(product)}</td><td class="ltr">${esc(product.barcode || "—")}</td><td class="ltr">${esc(product.tax_code || "—")}</td><td class="num">${product.type === "variable" ? `از ${money(product.price)}` : money(product.price)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td><td class="row-actions"><button type="button" class="btn" data-act="edit-product" data-id="${product.id}">ویرایش</button><button type="button" class="btn danger" data-act="archive-product" data-id="${product.id}">بایگانی</button></td></tr>`).join("")}
+  </tbody></table>${moreControl("more-products", rows.length, state.productLimit)}`;
 }
 function catalogChips() {
   const chips = [["", "همه"], ["water", "تصفیه آب"], ["air", "تصفیه هوا"], ["bath", "حمام"]];
@@ -701,15 +723,25 @@ function productsHtml() {
   </div>`;
 }
 
+function inventoryFiltered() {
+  const products = state.inventory?.products || [];
+  const query = state.inventoryQuery.trim();
+  if (!query) return products;
+  return products.filter((product) => `${product.name} ${product.sku || ""} ${product.barcode || ""}`.includes(query));
+}
+function inventoryTable() {
+  const rows = inventoryFiltered();
+  const shown = rows.slice(0, state.inventoryLimit);
+  const body = shown.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}${product.type === "variable" ? ` <span class="pill">متغیر</span>` : ""}${variationLines(product)}</td><td class="num">${money(product.price)}</td><td class="num">${money(product.cost)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td></tr>`).join("") || `<tr><td colspan="5">کالایی نیست.</td></tr>`;
+  return `<table><thead><tr><th></th><th>کالا</th><th>قیمت</th><th>خرید</th><th>موجودی</th></tr></thead><tbody>${body}</tbody></table>${moreControl("more-inventory", rows.length, state.inventoryLimit)}`;
+}
 function inventoryHtml() {
   const data = state.inventory;
   if (!data) return "";
-  const options = stockChoices(data.products);
+  const options = stockChoices(inventoryFiltered().slice(0, PAGE_SIZE));
   const pay = data.pay_accounts.map((account) => `<option value="${esc(account.code)}">${esc(account.name)}</option>`).join("");
-  return `<div class="stack"><section class="card"><table><thead><tr><th></th><th>کالا</th><th>قیمت</th><th>خرید</th><th>موجودی</th></tr></thead><tbody>
-    ${data.products.map((product) => `<tr><td>${thumb(product.image, product.name, true)}</td><td>${esc(product.name)}${product.type === "variable" ? ` <span class="pill">متغیر</span>` : ""}${variationLines(product)}</td><td class="num">${money(product.price)}</td><td class="num">${money(product.cost)}</td><td class="num">${num(product.stock)} ${product.low ? `<span class="pill warn">کم</span>` : ""}</td></tr>`).join("") || `<tr><td colspan="5">کالایی نیست.</td></tr>`}
-  </tbody></table>
-    <details><summary>تعدیل موجودی</summary><form data-act="adjust"><div class="field"><label>کالا</label><select name="product_id">${options}</select></div><div class="field"><label>موجودی جدید</label><input name="stock" inputmode="numeric" required></div><div class="field"><label>شرح</label><input name="note"></div><button class="btn primary" type="submit">ثبت</button></form></details>
+  return `<div class="stack"><section class="card"><input id="inventory-query" value="${esc(state.inventoryQuery)}" placeholder="جستجوی کالا برای دیدن و تعدیل"><div id="inventory-box">${inventoryTable()}</div>
+    <details><summary>تعدیل موجودی</summary><form data-act="adjust"><div class="field"><label>کالا</label><select name="product_id">${options}</select><p class="hint">اگر کالا در فهرست نیست، نامش را بالا بنویسید.</p></div><div class="field"><label>موجودی جدید</label><input name="stock" inputmode="numeric" required></div><div class="field"><label>شرح</label><input name="note"></div><button class="btn primary" type="submit">ثبت</button></form></details>
     <details><summary>رسید خرید</summary><form data-act="purchase"><div class="grid-2"><div class="field"><label>کالا</label><select name="product_id">${options}</select></div><div class="field"><label>تعداد</label><input name="qty" inputmode="numeric" required></div></div><div class="grid-2"><div class="field"><label>فی خرید</label><input name="unit_cost" inputmode="numeric" required></div><div class="field"><label>پرداخت از</label><select name="pay_code">${pay}</select></div></div><p class="hint">اگر فی خرید وارد شود، میانگین قیمت خرید عوض می‌شود و سند حسابداری می‌خورد.</p><button class="btn primary" type="submit">ثبت خرید</button></form></details>
   </section>
   <section class="card"><h2 class="section-title">گردش اخیر</h2><table><thead><tr><th>زمان</th><th>کالا</th><th>نوع</th><th>از</th><th>به</th><th>شرح</th></tr></thead><tbody>
@@ -1336,8 +1368,17 @@ async function onClick(event) {
     return;
   }
   if (act === "open-import") { state.modal = { type: "import", name: "", preview: null }; render(); return; }
+  if (act === "more-products" || act === "more-pos" || act === "more-inventory") {
+    if (act === "more-products") state.productLimit += PAGE_SIZE;
+    if (act === "more-pos") state.posLimit += PAGE_SIZE;
+    if (act === "more-inventory") state.inventoryLimit += PAGE_SIZE;
+    const box = document.getElementById(act === "more-pos" ? "pos-grid" : act === "more-inventory" ? "inventory-box" : "product-table");
+    if (box) box.innerHTML = act === "more-pos" ? posTiles() : act === "more-inventory" ? inventoryTable() : productRows();
+    return;
+  }
   if (act === "catalog-filter") {
     state.catalog = el.dataset.family || "";
+    state.productLimit = PAGE_SIZE;
     document.querySelectorAll("[data-act=catalog-filter]").forEach((button) => {
       button.classList.toggle("on", (button.dataset.family || "") === state.catalog);
     });
@@ -1500,13 +1541,24 @@ function onInput(event) {
   if (event.target.id === "discount") refreshPayable();
   if (event.target.id === "pos-query") {
     state.posQuery = event.target.value;
+    state.posLimit = PAGE_SIZE;
     const box = document.getElementById("pos-grid");
     if (box) box.innerHTML = posTiles();
   }
   if (event.target.id === "product-query") {
     state.productQuery = event.target.value;
+    state.productLimit = PAGE_SIZE;
     const box = document.getElementById("product-table");
     if (box) box.innerHTML = productRows();
+  }
+  if (event.target.id === "inventory-query") {
+    state.inventoryQuery = event.target.value;
+    state.inventoryLimit = PAGE_SIZE;
+    const box = document.getElementById("inventory-box");
+    if (box) box.innerHTML = inventoryTable();
+    document.querySelectorAll("form[data-act=adjust] select[name=product_id], form[data-act=purchase] select[name=product_id]").forEach((select) => {
+      select.innerHTML = stockChoices(inventoryFiltered().slice(0, PAGE_SIZE));
+    });
   }
 }
 function onChange(event) {

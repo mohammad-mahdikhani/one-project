@@ -438,6 +438,22 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(ambiguous.get_json()["created"], 1)
         self.assertEqual(ambiguous.get_json()["updated"], 0)
 
+    def test_long_catalog_match_stays_in_one_bucket(self):
+        import time
+        rows = [
+            {"id": i, "name": f"فیلتر آب 10 اینچ 5 میکرون مدل {i}", "sku": None, "barcode": None}
+            for i in range(1, 2001)
+        ]
+        rows.append({"id": 9000, "name": "فیلتر هوا 20 اینچ 1 میکرون", "sku": None, "barcode": None})
+        index = appmod.index_products(rows)
+        started = time.perf_counter()
+        for _ in range(40):
+            missed = appmod.locate_import(*index, {"barcode": None, "sku": None, "name": "فیلتر تصفیه آب 10 اینچ 5 میکرون"})
+            self.assertIsNone(missed)
+            found = appmod.locate_import(*index, {"barcode": None, "sku": None, "name": "فیلتر تصفیه هوا ۲۰ اینچ ۱ میکرون"})
+            self.assertEqual(found["id"], 9000)
+        self.assertLess(time.perf_counter() - started, 0.5)
+
     def test_woo_links_the_same_filter_and_writes_the_missing_code(self):
         water = self.add_product(
             name="فیلتر تصفیه آب ۱۰ اینچ ۵ میکرون", price=9000, stock=4,
@@ -602,7 +618,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertIn("api.telegram.org/bot" + token + "/sendMessage", seen["url"])
         self.assertEqual(seen["chat"], "55001")
         self.assertIn("صندوق بسته ماند", seen["text"])
-        self.assertIn("1.1.1", seen["text"])
+        self.assertIn("1.1.2", seen["text"])
         listed = self.client.get("/api/support/messages").get_json()["messages"]
         self.assertEqual(listed[-1]["body"], "صندوق بسته ماند")
         self.assertEqual(listed[-1]["delivery"], "telegram")
@@ -1195,7 +1211,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.1.1")
+        self.assertEqual(appmod.APP_VERSION, "1.1.2")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -1220,7 +1236,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
-        self.assertIn("1.1.1", run)
+        self.assertIn("1.1.2", run)
         self.assertIn("invoice-edge", script)
         self.assertIn("نوع متغیر را انتخاب کنید", script)
         self.assertIn("همین مقدارهای نوشته‌شده", script)
@@ -1234,6 +1250,8 @@ class DaftarchiTest(unittest.TestCase):
         self.assertIn("گزارش این خطا", script)
         self.assertIn("data-act=\"check-update\"", script)
         self.assertIn("data-act=\"catalog-filter\"", script)
+        self.assertIn("more-products", script)
+        self.assertIn("loading=\"lazy\"", script)
         self.assertIn("تصفیه هوا", script)
         page = Path("/workspace/templates/index.html").read_text(encoding="utf-8")
         self.assertIn("/manifest.webmanifest", page)
@@ -1255,7 +1273,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.1.1")
+        self.assertEqual(boot["version"], "1.1.2")
         home = self.client.get("/")
         self.assertIn("manifest.webmanifest", home.get_data(as_text=True))
         manifest = json.loads(self.client.get("/manifest.webmanifest").get_data(as_text=True))
@@ -1264,7 +1282,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(manifest["name"], "دفترچی")
         worker = self.client.get("/sw.js")
         self.assertEqual(worker.status_code, 200)
-        self.assertIn("daftarchi-1.1.1", worker.get_data(as_text=True))
+        self.assertIn("daftarchi-1.1.2", worker.get_data(as_text=True))
         relay = Path("/workspace/site-updates/daftarchi/telegram.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-telegram", relay)
         self.assertIn("telegram.json", relay)

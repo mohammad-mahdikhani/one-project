@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import calendar
+import functools
 import hashlib
 import hmac
 import html
@@ -103,7 +104,7 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.1.1"
+APP_VERSION = "1.1.2"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -194,6 +195,10 @@ def connect():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=3000")
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA cache_size=-8000")
     try:
         yield conn
         conn.commit()
@@ -359,6 +364,7 @@ def product_family(text: str) -> str:
     return ""
 
 
+@functools.lru_cache(maxsize=8192)
 def product_marks(name: str) -> dict:
     text = name_key(name)
     inches = {"0.5"} if re.search(r"نیم\s*اینچ", text) else set()
@@ -2846,13 +2852,26 @@ def product_snapshot(row) -> dict:
     return {key: row[key] for key in row.keys()} if not isinstance(row, dict) else dict(row)
 
 
-def remember_product(by_barcode, by_sku, by_name, item):
+def signature_of(marks: dict):
+    if marks["family"] not in FILTER_FAMILIES:
+        return None
+    if not (marks["inches"] or marks["microns"] or marks["codes"]):
+        return None
+    return (marks["family"], marks["inches"], marks["microns"], marks["codes"], marks["materials"], marks["roles"])
+
+
+def remember_product(by_barcode, by_sku, by_name, item, by_sig):
     if item.get("barcode"):
         by_barcode[item["barcode"]] = item
     if item.get("sku"):
         by_sku[item["sku"]] = item
     key = name_key(item.get("name") or "")
     item["marks"] = product_marks(item.get("name") or "")
+    sig = signature_of(item["marks"])
+    if sig:
+        bucket = by_sig.setdefault(sig, [])
+        by_sig[sig] = [old for old in bucket if old["id"] != item["id"]]
+        by_sig[sig].append(item)
     if not key:
         return
     bucket = by_name.setdefault(key, [])
@@ -2860,21 +2879,25 @@ def remember_product(by_barcode, by_sku, by_name, item):
     by_name[key].append(item)
 
 
-def forget_product(by_barcode, by_sku, by_name, item):
+def forget_product(by_barcode, by_sku, by_name, item, by_sig):
     if item.get("barcode") and by_barcode.get(item["barcode"], {}).get("id") == item["id"]:
         by_barcode.pop(item["barcode"], None)
     if item.get("sku") and by_sku.get(item["sku"], {}).get("id") == item["id"]:
         by_sku.pop(item["sku"], None)
+    marks = item.get("marks") or product_marks(item.get("name") or "")
+    sig = signature_of(marks)
+    if sig and sig in by_sig:
+        by_sig[sig] = [old for old in by_sig[sig] if old["id"] != item["id"]]
     key = name_key(item.get("name") or "")
     if key in by_name:
         by_name[key] = [old for old in by_name[key] if old["id"] != item["id"]]
 
 
 def index_products(rows):
-    by_barcode, by_sku, by_name = {}, {}, {}
+    by_barcode, by_sku, by_name, by_sig = {}, {}, {}, {}
     for row in rows:
-        remember_product(by_barcode, by_sku, by_name, product_snapshot(row))
-    return by_barcode, by_sku, by_name
+        remember_product(by_barcode, by_sku, by_name, product_snapshot(row), by_sig)
+    return by_barcode, by_sku, by_name, by_sig
 
 
 def named_product(by_name, name, sku):
@@ -2891,28 +2914,25 @@ def named_product(by_name, name, sku):
     return (blank or matches)[0]
 
 
-def fuzzy_product(by_name, name, sku):
-    wanted = product_marks(name)
-    if wanted["family"] not in FILTER_FAMILIES:
+def fuzzy_product(by_sig, name, sku):
+    sig = signature_of(product_marks(name))
+    if not sig:
         return None
     found = []
     seen = set()
-    for bucket in by_name.values():
-        for item in bucket:
-            if item["id"] in seen:
-                continue
-            seen.add(item["id"])
-            if sku_blocks(sku, item.get("sku")):
-                continue
-            other = item.get("marks") or product_marks(item.get("name") or "")
-            if marks_match(wanted, other):
-                found.append(item)
+    for item in by_sig.get(sig) or []:
+        if item["id"] in seen:
+            continue
+        seen.add(item["id"])
+        if sku_blocks(sku, item.get("sku")):
+            continue
+        found.append(item)
     if len(found) == 1:
         return found[0]
     return None
 
 
-def locate_import(by_barcode, by_sku, by_name, item):
+def locate_import(by_barcode, by_sku, by_name, by_sig, item):
     found = by_barcode.get(item["barcode"]) if item.get("barcode") else None
     coded = by_sku.get(item["sku"]) if item.get("sku") else None
     if found and coded and found["id"] != coded["id"]:
@@ -2922,17 +2942,17 @@ def locate_import(by_barcode, by_sku, by_name, item):
     named = named_product(by_name, item["name"], item.get("sku"))
     if named:
         return named
-    return fuzzy_product(by_name, item["name"], item.get("sku"))
+    return fuzzy_product(by_sig, item["name"], item.get("sku"))
 
 
 def plan_product_import(conn, parsed):
-    by_barcode, by_sku, by_name = index_products(conn.execute("SELECT * FROM products").fetchall())
+    by_barcode, by_sku, by_name, by_sig = index_products(conn.execute("SELECT * FROM products").fetchall())
     creating = updating = 0
     errors = []
     temp_id = 0
     for item in parsed:
         try:
-            existing = locate_import(by_barcode, by_sku, by_name, item)
+            existing = locate_import(by_barcode, by_sku, by_name, by_sig, item)
         except AppError as exc:
             errors.append({"row": item["row"], "error": str(exc)})
             continue
@@ -2942,8 +2962,8 @@ def plan_product_import(conn, parsed):
             current["name"] = item["name"]
             current["sku"] = item["sku"] or existing.get("sku")
             current["barcode"] = item["barcode"] or existing.get("barcode")
-            forget_product(by_barcode, by_sku, by_name, existing)
-            remember_product(by_barcode, by_sku, by_name, current)
+            forget_product(by_barcode, by_sku, by_name, existing, by_sig)
+            remember_product(by_barcode, by_sku, by_name, current, by_sig)
         else:
             creating += 1
             temp_id -= 1
@@ -2952,17 +2972,17 @@ def plan_product_import(conn, parsed):
                 "name": item["name"],
                 "sku": item["sku"],
                 "barcode": item["barcode"],
-            })
+            }, by_sig)
     return creating, updating, errors
 
 
 def save_imported_products(user, parsed):
     created, updated, errors, ids = 0, 0, [], []
     with connect() as conn:
-        by_barcode, by_sku, by_name = index_products(conn.execute("SELECT * FROM products").fetchall())
+        by_barcode, by_sku, by_name, by_sig = index_products(conn.execute("SELECT * FROM products").fetchall())
         for item in parsed:
             try:
-                existing = locate_import(by_barcode, by_sku, by_name, item)
+                existing = locate_import(by_barcode, by_sku, by_name, by_sig, item)
                 if existing and existing["id"] > 0:
                     new_stock = item["stock"] if item["stock"] is not None else existing["stock"]
                     conn.execute(
@@ -2975,8 +2995,8 @@ def save_imported_products(user, parsed):
                     if new_stock != existing["stock"]:
                         log_stock(conn, existing["id"], "adjust", new_stock - existing["stock"], existing["stock"], new_stock, "ورود اکسل", user["id"])
                     fresh = product_snapshot(conn.execute("SELECT * FROM products WHERE id=?", (existing["id"],)).fetchone())
-                    forget_product(by_barcode, by_sku, by_name, existing)
-                    remember_product(by_barcode, by_sku, by_name, fresh)
+                    forget_product(by_barcode, by_sku, by_name, existing, by_sig)
+                    remember_product(by_barcode, by_sku, by_name, fresh, by_sig)
                     updated += 1
                     ids.append(existing["id"])
                 else:
@@ -2989,7 +3009,7 @@ def save_imported_products(user, parsed):
                     if initial:
                         log_stock(conn, cur.lastrowid, "adjust", initial, 0, initial, "ورود اکسل", user["id"])
                     fresh = product_snapshot(conn.execute("SELECT * FROM products WHERE id=?", (cur.lastrowid,)).fetchone())
-                    remember_product(by_barcode, by_sku, by_name, fresh)
+                    remember_product(by_barcode, by_sku, by_name, fresh, by_sig)
                     created += 1
                     ids.append(cur.lastrowid)
             except AppError as exc:
@@ -3294,14 +3314,29 @@ def find_unlinked_product(conn, name: str, remote_sku: str | None):
     return fuzzy[0]
 
 
-def store_remote_product(conn, remote: dict, variations: list[dict] | None, user_id: int) -> str:
+def linked_from_index(index, name: str, remote_sku: str | None):
+    by_name, by_sig = index
+    key = name_key(name)
+    exact = []
+    if key:
+        for item in by_name.get(key) or []:
+            if not sku_blocks(remote_sku, item.get("sku")):
+                exact.append(item)
+    if len(exact) == 1:
+        return exact[0]
+    if exact:
+        return None
+    return fuzzy_product(by_sig, name, remote_sku)
+
+
+def store_remote_product(conn, remote: dict, variations: list[dict] | None, user_id: int, index=None) -> str:
     sku = str(remote.get("sku") or "").strip() or None
     barcode = remote_barcode(remote)
     row = conn.execute("SELECT * FROM products WHERE woo_id=?", (remote.get("id"),)).fetchone()
     if not row and sku:
         row = conn.execute("SELECT * FROM products WHERE sku=?", (sku,)).fetchone()
     if not row and remote.get("name"):
-        row = find_unlinked_product(conn, remote["name"], sku)
+        row = linked_from_index(index, remote["name"], sku) if index else find_unlinked_product(conn, remote["name"], sku)
     image = remote_image(remote)
     kind = "variable" if variations is not None else "simple"
     try:
@@ -3331,6 +3366,9 @@ def store_remote_product(conn, remote: dict, variations: list[dict] | None, user
         )
         product_id = cur.lastrowid
         state = "imported"
+    if index and row is not None and not row["woo_id"]:
+        snap = row if isinstance(row, dict) else product_snapshot(row)
+        forget_product({}, {}, index[0], snap, index[1])
     if kind == "variable":
         seen = []
         parents = [item for item in (remote.get("attributes") or []) if isinstance(item, dict)]
@@ -3386,8 +3424,10 @@ def woo_pull():
                 variations = fetch_woo_variations(settings, int(remote["id"]))
             prepared.append((remote, variations))
         with connect() as conn:
+            index = index_products(conn.execute("SELECT * FROM products WHERE active=1 AND woo_id IS NULL").fetchall())
+            unlinked = (index[2], index[3])
             for remote, variations in prepared:
-                state = store_remote_product(conn, remote, variations, user["id"])
+                state = store_remote_product(conn, remote, variations, user["id"], unlinked)
                 if state == "imported":
                     imported += 1
                 elif state == "updated":
