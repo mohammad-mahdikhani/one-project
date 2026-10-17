@@ -723,6 +723,9 @@ class DaftarchiTest(unittest.TestCase):
         self.login("09125556677", "cashier1", cashier)
         denied = cashier.put("/api/settings", json={"low_stock": "2"})
         self.assertEqual(denied.status_code, 403)
+        licenses = cashier.get("/api/licenses")
+        self.assertEqual(licenses.status_code, 403)
+        self.assertIn("مدیر", licenses.get_json()["error"])
         self.open_register(0)
         product = self.add_product(name="شیر", barcode="333", stock=2, price=8000, cost=0)
         sold = cashier.post("/api/sales", json={
