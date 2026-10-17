@@ -360,11 +360,33 @@ async function addByBarcode(code) {
   if (input) input.value = "";
 }
 
+function featureList(items) {
+  if (!items?.length) return "";
+  return `<ul class="feature-list">${items.map((item) => `<li>${esc(item)}</li>`).join("")}</ul>`;
+}
+function seenPluginKeys() {
+  try { return JSON.parse(localStorage.getItem("daftarchi-seen-plugins") || "[]"); }
+  catch { return []; }
+}
+function unseenPlugins(update) {
+  const seen = new Set(seenPluginKeys());
+  return (update?.plugins || []).filter((item) => item.id && item.version && !seen.has(`${item.id}@${item.version}`));
+}
+function rememberPlugins(update) {
+  const keys = (update?.plugins || []).filter((item) => item.id && item.version).map((item) => `${item.id}@${item.version}`);
+  try { localStorage.setItem("daftarchi-seen-plugins", JSON.stringify(keys)); }
+  catch { /* the banner can stay until the next visit */ }
+}
 function updateBanner() {
-  if (!state.update?.update) return "";
-  return `<div class="banner">نسخه ${esc(state.update.version)} آماده است. دانلود کنید و روی همین دفترچی نصب کنید. فروش و حساب‌ها می‌مانند.
-    <a class="btn" href="${esc(state.update.url)}" target="_blank" rel="noopener">دانلود نصب‌کننده</a>
-    ${state.update.notes ? `<div class="hint">${esc(state.update.notes)}</div>` : ""}
+  const update = state.update;
+  const plugins = unseenPlugins(update);
+  if (!update?.update && !plugins.length) return "";
+  const pluginText = plugins.map((item) => `<div class="line"><span>${esc(item.name)} ${esc(item.version)}</span><a class="btn" href="${esc(item.url)}" target="_blank" rel="noopener">دانلود پلاگین</a></div>${featureList(item.features)}`).join("");
+  return `<div class="banner">${update.update ? `نسخه ${esc(update.version)} آماده است. فایل را دانلود کنید و روی همین دفترچی اجرا کنید. فروش و حساب‌ها می‌مانند.` : "پلاگین تازه روی وب‌بیکری آماده است."}
+    ${featureList(update.update ? update.features : [])}
+    ${update.update && update.notes && !update.features?.length ? `<div class="hint">${esc(update.notes)}</div>` : ""}
+    ${update.update ? `<a class="btn" href="${esc(update.url)}" target="_blank" rel="noopener">دانلود نسخه تازه</a>` : ""}
+    ${pluginText}
   </div>`;
 }
 function supportHtml() {
@@ -377,7 +399,7 @@ function supportHtml() {
   const panel = state.supportTab === "bug"
     ? `<form data-act="send-support"><input type="hidden" name="kind" value="bug"><div class="field"><label>چه اتفاقی افتاد؟</label><textarea name="body" required rows="4">${esc(state.lastError || "")}</textarea></div><button class="btn primary" type="submit">ارسال گزارش</button></form>`
     : state.supportTab === "update"
-      ? `<div class="stats update-stats"><div class="stat"><small>نسخه شما</small><strong class="num">${esc(update?.current || "")}</strong></div><div class="stat"><small>نسخه انتشار</small><strong class="num">${esc(fresh ? update.version : (update?.current || ""))}</strong></div></div><p>${fresh ? `نسخه ${esc(update.version)} آماده است. فایل را دانلود کنید و روی همین دفترچی اجرا کنید. فروش و حساب‌ها می‌مانند.` : "همین نسخه برای انتشار است. فروش و حساب‌ها با به‌روزرسانی پاک نمی‌شوند."}</p>${update?.notes ? `<p class="hint">${esc(update.notes)}</p>` : ""}${fresh ? `<a class="btn primary" href="${esc(update.url)}" target="_blank" rel="noopener">دانلود نسخه تازه</a>` : ""}<button type="button" class="btn" data-act="check-update">بررسی دوباره</button>`
+      ? `<div class="stats update-stats"><div class="stat"><small>نسخه شما</small><strong class="num">${esc(update?.current || "")}</strong></div><div class="stat"><small>نسخه انتشار</small><strong class="num">${esc(fresh ? update.version : (update?.current || ""))}</strong></div></div><p>${fresh ? `نسخه ${esc(update.version)} آماده است. فایل را دانلود کنید و روی همین دفترچی اجرا کنید. فروش و حساب‌ها می‌مانند.` : "همین نسخه برای انتشار است. فروش و حساب‌ها با به‌روزرسانی پاک نمی‌شوند."}</p>${featureList(update?.features)}${update?.notes ? `<p class="hint">${esc(update.notes)}</p>` : ""}${(update?.plugins || []).map((item) => `<div class="line"><span>${esc(item.name)} <span class="num">${esc(item.version)}</span></span><a class="btn" href="${esc(item.url)}" target="_blank" rel="noopener">دانلود پلاگین</a></div>${item.notes ? `<p class="hint">${esc(item.notes)}</p>` : ""}${featureList(item.features)}`).join("")}${fresh ? `<a class="btn primary" href="${esc(update.url)}" target="_blank" rel="noopener">دانلود نسخه تازه</a>` : ""}<button type="button" class="btn" data-act="check-update">بررسی دوباره</button>`
       : `<div class="chat-log">${bubbles}</div><form data-act="send-support"><input type="hidden" name="kind" value="chat"><div class="field"><label>پیام</label><textarea name="body" required rows="3" placeholder="برای پشتیبانی بنویسید"></textarea></div><button class="btn primary" type="submit">ارسال به تلگرام</button></form>`;
   const sheet = state.support ? `<section class="support-sheet" data-act="stop"><div class="row-actions"><strong>پشتیبانی دفترچی</strong><button type="button" class="btn" data-act="toggle-support">بستن</button></div><div class="seg">${[["chat", "چت"], ["bug", "گزارش خطا"], ["update", "به‌روزرسانی"]].map(([id, label]) => `<button type="button" class="${state.supportTab === id ? "on" : ""}" data-act="support-tab" data-tab="${id}">${label}</button>`).join("")}</div>${panel}</section>` : "";
   return `${sheet}<button type="button" class="dock" data-act="toggle-support">${state.support ? "بستن پشتیبانی" : "پشتیبانی"}</button>`;
@@ -1350,6 +1372,7 @@ async function onClick(event) {
       state.support = true;
       if (act === "report-error") state.supportTab = "bug";
       if (el.dataset.tab) state.supportTab = el.dataset.tab;
+      if (state.supportTab === "update") rememberPlugins(state.update);
       state.supportLog = (await api("/api/support/messages")).messages;
       paintChrome();
     });
@@ -1409,6 +1432,7 @@ async function onClick(event) {
       await loadUpdate();
       state.support = true;
       state.supportTab = "update";
+      rememberPlugins(state.update);
       toast(state.update?.update ? `نسخه ${state.update.version} آماده است` : "نسخه تازه‌ای نیست");
       paintChrome();
     } else if (act === "commit-import") {

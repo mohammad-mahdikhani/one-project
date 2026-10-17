@@ -1,5 +1,10 @@
 {
   "version": "1.1.6",
-  "url": "https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi.exe",
-  "notes": "درگاه زیبال در مرورگر باز می‌شود و آی‌پی رایانه فروشگاه به زیبال نمی‌رود."
+  "url": "https://webakery.ir/license-server/releases/Daftarchi.exe",
+  "notes": "پرداخت زیبال در مرورگر باز می‌شود و حساب خریدار لایسنس روی هاست ذخیره می‌شود.",
+  "features": [
+    "پرداخت زیبال در مرورگر باز می‌شود و آی‌پی رایانه فروشگاه به درگاه نمی‌رود",
+    "حساب خریدار لایسنس روی هاست وب‌بیکری ذخیره می‌شود"
+  ],
+  "plugins": []
 }
