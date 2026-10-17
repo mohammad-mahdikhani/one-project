@@ -1,0 +1,30 @@
+دانلود از گیت‌هاب، نه از خود هاست:
+
+فایل را بزنید تا دفترچی باز شود. صفحه نصب ندارد:
+https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi.exe
+
+فروش و حساب‌ها سر جایشان می‌مانند.
+
+سامانه مودیان، از تنظیمات:
+شناسه یکتای حافظه مالیاتی، کد اقتصادی و کلید خصوصی کارپوشه را وارد کنید.
+روی هر کالا شناسه ۱۳ رقمی کالا/خدمت را بگذارید.
+ارسال آزمایشی روشن است. تا آن را برندارید، صورتحساب واقعی ثبت نمی‌شود.
+
+
+فایل‌های هاست، یکجا:
+https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/accounting-ledger-56dd/Daftarchi-Host.zip
+
+اگر در File Manager اسم‌ها mailphp و versionjson است، نقطه ندارند.
+Rename کنید به:
+
+  mail.php
+  version.json
+
+نقطه بین اسم و پسوند واجب است.
+
+بعد index.php و .htaccess را هم از همان زیپ در public_html/daftarchi بگذارید.
+
+اگر این آدرس نوشت ok و daftarchi-mail، درست است:
+https://webakery.ir/daftarchi/mail.php
+
+ورود اولیه: 09120000000 / daftarchi
