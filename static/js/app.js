@@ -782,7 +782,7 @@ function licensesHtml() {
   if (!data) return "";
   const plans = data.plans.map((plan) => `<button type="button" class="plan buy" data-act="pick-plan" data-plan="${plan.id}"><span>${esc(plan.title)}</span><em class="num">${money(plan.price)}</em><span class="buy-label">خرید</span>${plan.remaining != null ? `<span>باقی‌مانده ${num(plan.remaining)} از ${num(plan.cap)}</span>` : ""}</button>`).join("");
   return `<div class="stack">${accessCard(data.access)}<div class="plans">${plans}</div>
-    <p class="hint">روی طرح بزنید تا صفحه زیبال باز شود. مبلغ وارد صندوق فروشگاه نمی‌شود. درخواست پرداخت از هاست وب‌بیکری می‌رود، نه از آی‌پی این رایانه.</p>
+    <p class="hint">روی طرح بزنید تا صفحه زیبال باز شود. مبلغ وارد صندوق فروشگاه نمی‌شود. نام، موبایل و طرح خریدار روی هاست وب‌بیکری هم می‌ماند؛ فایل accounts.php را کنار pay.php در public_html/license-server بگذارید.</p>
       <details><summary>قیمت‌ها و ظرفیت پنجاه‌ساله</summary><form data-act="save-prices"><div class="grid-2">
         ${[["price_3m", "سه ماهه"], ["price_6m", "شش ماهه"], ["price_12m", "یک ساله"], ["price_50y", "پنجاه ساله"], ["cap_50y", "ظرفیت پنجاه ساله"]].map(([key, label]) => {
           const plan = data.plans.find((item) => item.id === { price_3m: "3m", price_6m: "6m", price_12m: "12m", price_50y: "50y" }[key]);
@@ -791,8 +791,8 @@ function licensesHtml() {
         }).join("")}
       </div><button class="btn" type="submit">ذخیره قیمت‌ها</button></form></details>
     ${pendingLicenses(data)}
-    <section class="card"><h2 class="section-title">لایسنس‌های فروخته‌شده</h2><table><thead><tr><th>طرح</th><th>خریدار</th><th>تماس</th><th>مبلغ</th><th>وضعیت</th><th>تا</th></tr></thead><tbody>
-      ${data.licenses.map((row) => `<tr><td>${esc(row.title)}</td><td>${esc(row.buyer_name)}</td><td class="ltr">${esc(row.phone)}</td><td class="num">${money(row.payable)}</td><td>${esc(LICENSE_STATUS[row.status] || row.status)}</td><td>${esc(row.ends_jalali)}</td></tr>`).join("") || `<tr><td colspan="6">هنوز لایسنسی فروخته نشده.</td></tr>`}
+    <section class="card"><h2 class="section-title">لایسنس‌های فروخته‌شده</h2><table><thead><tr><th>طرح</th><th>خریدار</th><th>تماس</th><th>مبلغ</th><th>وضعیت</th><th>هاست</th><th>تا</th></tr></thead><tbody>
+      ${data.licenses.map((row) => `<tr><td>${esc(row.title)}</td><td>${esc(row.buyer_name)}</td><td class="ltr">${esc(row.phone)}</td><td class="num">${money(row.payable)}</td><td>${esc(LICENSE_STATUS[row.status] || row.status)}</td><td>${row.host_saved ? "ذخیره شد" : "منتظر هاست"}</td><td>${esc(row.ends_jalali)}</td></tr>`).join("") || `<tr><td colspan="7">هنوز لایسنسی فروخته نشده.</td></tr>`}
     </tbody></table></section></div>`;
 }
 

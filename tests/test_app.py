@@ -19,7 +19,18 @@ class DaftarchiTest(unittest.TestCase):
             path.unlink()
         appmod.init_db()
         self.client = appmod.app.test_client()
+        self._http = appmod.http_request
+
+        def offline_accounts(method, url, payload=None, headers=None, form=None, timeout=12):
+            if "accounts.php" in str(url):
+                return 404, {"raw": "missing"}
+            return self._http(method, url, payload=payload, headers=headers, form=form, timeout=timeout)
+
+        appmod.http_request = offline_accounts
         self.login()
+
+    def tearDown(self):
+        appmod.http_request = self._http
 
     def login(self, ident="09120000000", password="daftarchi", client=None):
         client = client or self.client
@@ -229,6 +240,48 @@ class DaftarchiTest(unittest.TestCase):
         appmod.init_db()
         again = {row["id"]: row for row in self.client.get("/api/licenses").get_json()["plans"]}
         self.assertEqual(again["50y"]["price"], 18000000)
+
+    def test_license_account_is_stored_on_the_host(self):
+        seen = {}
+
+        def host(method, url, payload=None, headers=None, form=None, timeout=12):
+            if "accounts.php" in str(url):
+                seen["url"] = url
+                seen["payload"] = payload
+                return 200, {"ok": True, "service": "daftarchi-accounts", "saved": 1, "ids": [1]}
+            return 200, []
+
+        original = appmod.http_request
+        appmod.http_request = host
+        try:
+            sold = self.client.post("/api/licenses", json={
+                "plan": "50y", "buyer_name": "فروشگاه دریا", "phone": "09124445566", "payment_method": "cash",
+            })
+        finally:
+            appmod.http_request = original
+        self.assertEqual(sold.status_code, 200, sold.get_json())
+        self.assertTrue(sold.get_json()["host_saved"])
+        self.assertTrue(str(seen["url"]).startswith("https://webakery.ir/license-server/accounts.php"))
+        item = seen["payload"]["items"][0]
+        self.assertEqual(item["buyer_name"], "فروشگاه دریا")
+        self.assertEqual(item["phone"], "09124445566")
+        self.assertEqual(item["plan"], "50y")
+        self.assertEqual(item["payable"], 15000000)
+        self.assertEqual(item["shop_phone"], "09120000000")
+        self.assertNotIn("password", seen["payload"])
+        self.assertNotIn("password", item)
+        listed = self.client.get("/api/licenses").get_json()["licenses"]
+        self.assertTrue(listed[0]["host_saved"])
+
+        appmod.http_request = lambda *args, **kwargs: (404, {"raw": "missing"})
+        try:
+            kept = self.client.post("/api/licenses", json={
+                "plan": "3m", "buyer_name": "بدون هاست", "phone": "09127778899", "payment_method": "cash",
+            })
+        finally:
+            appmod.http_request = original
+        self.assertEqual(kept.status_code, 200, kept.get_json())
+        self.assertFalse(kept.get_json()["host_saved"])
 
     def test_archived_barcode_can_be_used_again(self):
         product = self.add_product()
@@ -632,7 +685,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertIn("api.telegram.org/bot" + token + "/sendMessage", seen["url"])
         self.assertEqual(seen["chat"], "55001")
         self.assertIn("صندوق بسته ماند", seen["text"])
-        self.assertIn("1.1.4", seen["text"])
+        self.assertIn("1.1.5", seen["text"])
         listed = self.client.get("/api/support/messages").get_json()["messages"]
         self.assertEqual(listed[-1]["body"], "صندوق بسته ماند")
         self.assertEqual(listed[-1]["delivery"], "telegram")
@@ -1238,7 +1291,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.1.4")
+        self.assertEqual(appmod.APP_VERSION, "1.1.5")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -1263,7 +1316,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
-        self.assertIn("1.1.4", run)
+        self.assertIn("1.1.5", run)
         self.assertIn("invoice-edge", script)
         self.assertIn("نوع متغیر را انتخاب کنید", script)
         self.assertIn("همین مقدارهای نوشته‌شده", script)
@@ -1302,7 +1355,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.1.4")
+        self.assertEqual(boot["version"], "1.1.5")
         home = self.client.get("/")
         self.assertIn("manifest.webmanifest", home.get_data(as_text=True))
         manifest = json.loads(self.client.get("/manifest.webmanifest").get_data(as_text=True))
@@ -1311,12 +1364,16 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(manifest["name"], "دفترچی")
         worker = self.client.get("/sw.js")
         self.assertEqual(worker.status_code, 200)
-        self.assertIn("daftarchi-1.1.4", worker.get_data(as_text=True))
+        self.assertIn("daftarchi-1.1.5", worker.get_data(as_text=True))
         relay = Path("/workspace/site-updates/daftarchi/telegram.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-telegram", relay)
         self.assertIn("telegram.json", relay)
         pay = Path("/workspace/site-updates/daftarchi/pay.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-pay", pay)
+        accounts = Path("/workspace/site-updates/daftarchi/accounts.php").read_text(encoding="utf-8")
+        self.assertIn("daftarchi-accounts", accounts)
+        self.assertIn("accounts.json", accounts)
+        self.assertNotIn("password", accounts)
         self.assertIn("gateway.zibal.ir/v1/request", pay)
         self.assertTrue(boot["host_mail"])
 

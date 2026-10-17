@@ -104,7 +104,7 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.1.4"
+APP_VERSION = "1.1.5"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -122,6 +122,10 @@ HOST_PAY_URLS = (
     "https://webakery.ir/license-server/pay.php",
     "https://webakery.ir/daftarchi/pay.php",
     "https://webakery.ir/pay.php",
+)
+HOST_ACCOUNT_URLS = (
+    "https://webakery.ir/license-server/accounts.php",
+    "https://webakery.ir/daftarchi/accounts.php",
 )
 HOST_MAIL_KEY = "daftarchi-webakery-mail"
 HOST_TELEGRAM_URLS = (
@@ -1737,6 +1741,74 @@ def explain_host_pay(detail: str) -> str:
     return f"پرداخت از هاست ساخته نشد: {text[:180]}"
 
 
+def host_account(action: str, fields: dict) -> dict:
+    payload = {"key": HOST_MAIL_KEY, "action": action, **fields}
+    failures = []
+    for url in HOST_ACCOUNT_URLS:
+        try:
+            status, body = http_request("POST", url, payload=payload, timeout=8)
+        except AppError as exc:
+            failures.append(str(exc))
+            continue
+        if not isinstance(body, dict) or "raw" in body:
+            failures.append(f"HTTP {status}")
+            continue
+        if status < 400 and body.get("ok") and body.get("service") == "daftarchi-accounts":
+            return body
+        if body.get("service") == "daftarchi-accounts" or isinstance(body.get("ok"), bool):
+            raise AppError(str(body.get("error") or f"HTTP {status}"), 502)
+        failures.append(f"HTTP {status}")
+    raise AppError(failures[-1] if failures else "HTTP 404", 502)
+
+
+def license_host_item(conn, row) -> dict:
+    shop = conn.execute("SELECT phone FROM users WHERE role='admin' ORDER BY id LIMIT 1").fetchone()
+    return {
+        "shop_phone": shop["phone"] if shop else "",
+        "local_id": int(row["id"]),
+        "buyer_name": row["buyer_name"],
+        "phone": row["phone"],
+        "plan": row["plan"],
+        "title": PLANS.get(row["plan"], (row["plan"], 0, ""))[0],
+        "payable": int(row["payable"]),
+        "status": row["status"] or "paid",
+        "starts_at": row["starts_at"] or "",
+        "ends_at": row["ends_at"] or "",
+        "gateway_ref": row["gateway_ref"] or "",
+        "payment_method": row["payment_method"] or "",
+    }
+
+
+def store_license_on_host(conn, row) -> bool:
+    try:
+        body = host_account("save", {"items": [license_host_item(conn, row)]})
+    except AppError:
+        conn.execute("UPDATE licenses SET host_saved=0 WHERE id=?", (row["id"],))
+        return False
+    saved_ids = {int(item) for item in (body.get("ids") or []) if str(item).isdigit()}
+    if saved_ids and int(row["id"]) not in saved_ids:
+        conn.execute("UPDATE licenses SET host_saved=0 WHERE id=?", (row["id"],))
+        return False
+    conn.execute("UPDATE licenses SET host_saved=1 WHERE id=?", (row["id"],))
+    return True
+
+
+def sync_licenses_to_host(conn) -> None:
+    rows = conn.execute(
+        "SELECT * FROM licenses WHERE COALESCE(host_saved,0)=0 ORDER BY id DESC LIMIT 20"
+    ).fetchall()
+    if not rows:
+        return
+    try:
+        body = host_account("save", {"items": [license_host_item(conn, row) for row in rows]})
+    except AppError:
+        return
+    saved_ids = {int(item) for item in (body.get("ids") or []) if str(item).isdigit()}
+    for row in rows:
+        if int(row["id"]) in saved_ids:
+            conn.execute("UPDATE licenses SET host_saved=1 WHERE id=?", (row["id"],))
+
+
 def host_pay(action: str, fields: dict) -> dict:
     payload = {"key": HOST_MAIL_KEY, "action": action, **fields}
     failures = []
@@ -2112,7 +2184,8 @@ def init_db():
               status TEXT NOT NULL DEFAULT 'paid',
               gateway TEXT,
               gateway_ref TEXT,
-              pay_url TEXT
+              pay_url TEXT,
+              host_saved INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS receipts (
               id INTEGER PRIMARY KEY,
@@ -2200,6 +2273,8 @@ def init_db():
             conn.execute("ALTER TABLE licenses ADD COLUMN gateway_ref TEXT")
         if "pay_url" not in have:
             conn.execute("ALTER TABLE licenses ADD COLUMN pay_url TEXT")
+        if "host_saved" not in have:
+            conn.execute("ALTER TABLE licenses ADD COLUMN host_saved INTEGER NOT NULL DEFAULT 0")
         product_cols = {row["name"] for row in conn.execute("PRAGMA table_info(products)")}
         if "tax_code" not in product_cols:
             conn.execute("ALTER TABLE products ADD COLUMN tax_code TEXT")
@@ -4029,6 +4104,7 @@ def license_out(row) -> dict:
     item["ends_jalali"] = to_jalali(row["ends_at"]) if row["ends_at"] else ""
     item["title"] = PLANS.get(row["plan"], (row["plan"], 0, ""))[0]
     item["status"] = row["status"] or "paid"
+    item["host_saved"] = bool(row["host_saved"]) if "host_saved" in row.keys() else False
     return item
 
 
@@ -4059,6 +4135,7 @@ def list_licenses():
         settings = get_settings(conn)
         sold = conn.execute("SELECT COUNT(*) AS c FROM licenses WHERE plan='50y' AND status!='canceled'").fetchone()["c"]
         cap = setting_int(settings, "cap_50y")
+        sync_licenses_to_host(conn)
         rows = conn.execute("SELECT * FROM licenses ORDER BY id DESC LIMIT 50").fetchall()
         access = ensure_access(conn)
     plans = []
@@ -4121,14 +4198,21 @@ def sell_license():
             ),
         )
         license_id = cur.lastrowid
-        if method != "gateway":
-            saved = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
+        saved = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
+        host_saved = store_license_on_host(conn, saved)
+        saved = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
     if method == "gateway":
         try:
             gateway_name, ref, pay_url = webakery_payment(settings, license_id, title, payable, buyer, phone)
         except Exception:
             with connect() as conn:
-                conn.execute("UPDATE licenses SET status='canceled' WHERE id=? AND status='pending'", (license_id,))
+                conn.execute(
+                    "UPDATE licenses SET status='canceled', host_saved=0 WHERE id=? AND status='pending'",
+                    (license_id,),
+                )
+                row = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
+                if row:
+                    store_license_on_host(conn, row)
             raise
         with connect() as conn:
             conn.execute(
@@ -4136,7 +4220,9 @@ def sell_license():
                 (gateway_name, ref, pay_url, license_id),
             )
             saved = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
-    return jsonify(ok=True, payable=payable, license=license_out(saved))
+            host_saved = store_license_on_host(conn, saved)
+            saved = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
+    return jsonify(ok=True, payable=payable, license=license_out(saved), host_saved=bool(saved["host_saved"]))
 
 
 @app.post("/api/licenses/<int:license_id>/confirm")
@@ -4165,6 +4251,8 @@ def confirm_license(license_id: int):
         ref = gateway_verify(settings, row)
     with connect() as conn:
         saved = mark_license_paid(conn, license_id, user["id"], ref)
+        store_license_on_host(conn, saved)
+        saved = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
         settings = get_settings(conn)
     if settings.get("sms_on_sale") == "1":
         notify_manager(settings, f"دفترچی: لایسنس وب‌بیکری {saved['payable']:,} تومان برای {saved['buyer_name']}")
@@ -4180,7 +4268,9 @@ def cancel_license(license_id: int):
             raise AppError("لایسنس پیدا نشد", 404)
         if row["status"] != "pending":
             raise AppError("فقط لایسنس در انتظار پرداخت را می‌توان لغو کرد")
-        conn.execute("UPDATE licenses SET status='canceled' WHERE id=?", (license_id,))
+        conn.execute("UPDATE licenses SET status='canceled', host_saved=0 WHERE id=?", (license_id,))
+        row = conn.execute("SELECT * FROM licenses WHERE id=?", (license_id,)).fetchone()
+        store_license_on_host(conn, row)
     return jsonify(ok=True)
 
 
@@ -4209,7 +4299,8 @@ def pay_return():
             else:
                 ref = gateway_verify(settings, row)
             with connect() as conn:
-                mark_license_paid(conn, row["id"], row["user_id"], ref)
+                saved = mark_license_paid(conn, row["id"], row["user_id"], ref)
+                store_license_on_host(conn, saved)
             return pay_page("لایسنس پرداخت شد و در دفترچی فعال است.", True)
         if sale:
             ref = gateway_verify(settings, sale)

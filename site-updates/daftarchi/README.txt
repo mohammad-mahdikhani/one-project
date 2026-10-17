@@ -13,6 +13,8 @@ https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/account
 
   version.json
   mail.php
+  pay.php
+  accounts.php
 
 بعد از آپلود، این آدرس‌ها باید در مرورگر باز شوند:
 
@@ -20,6 +22,7 @@ https://raw.githubusercontent.com/mohammad-mahdikhani/one-project/cursor/account
   https://webakery.ir/daftarchi/mail.php
 
 mail.php کد تأیید حساب و بازیابی رمز را از هاست به جیمیل می‌فرستد.
+accounts.php نام، موبایل و طرح خریدار لایسنس را در accounts.json روی همین هاست نگه می‌دارد. رمز عبور ذخیره نمی‌شود.
 اگر وردپرس یک پوشه بالاتر باشد، از wp_mail استفاده می‌کند. وگرنه نامه با mail هاست می‌رود.
 
 هر نسخه جدید:
