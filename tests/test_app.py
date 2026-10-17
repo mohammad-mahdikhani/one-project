@@ -685,7 +685,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertIn("api.telegram.org/bot" + token + "/sendMessage", seen["url"])
         self.assertEqual(seen["chat"], "55001")
         self.assertIn("صندوق بسته ماند", seen["text"])
-        self.assertIn("1.1.5", seen["text"])
+        self.assertIn("1.1.6", seen["text"])
         listed = self.client.get("/api/support/messages").get_json()["messages"]
         self.assertEqual(listed[-1]["body"], "صندوق بسته ماند")
         self.assertEqual(listed[-1]["delivery"], "telegram")
@@ -802,6 +802,43 @@ class DaftarchiTest(unittest.TestCase):
         finally:
             appmod.http_request = original
 
+    def test_shop_zibal_uses_host_and_browser(self):
+        product = self.add_product(name="عسل", barcode="445", price=20000, stock=2, cost=0)
+        calls = []
+
+        def fake_http(method, url, payload=None, headers=None, form=None, timeout=12):
+            calls.append((str(url), payload))
+            if str(url).endswith("/pay.php") and payload and payload.get("action") == "request":
+                self.assertTrue(str(url).startswith("https://webakery.ir/license-server/"))
+                self.assertEqual(payload["amount"], 200000)
+                self.assertNotIn("merchant", payload)
+                return 200, {
+                    "ok": True, "service": "daftarchi-pay", "result": 100,
+                    "trackId": 4455, "payUrl": "https://gateway.zibal.ir/start/4455",
+                }
+            if str(url).endswith("/pay.php") and payload and payload.get("action") == "verify":
+                self.assertEqual(payload["trackId"], 4455)
+                return 200, {"ok": True, "service": "daftarchi-pay", "result": 100, "refNumber": "7788"}
+            return 200, []
+
+        original = appmod.http_request
+        appmod.http_request = fake_http
+        try:
+            self.client.put("/api/settings", json={"gateway": "zibal", "gateway_sandbox": "0"})
+            pending = self.client.post("/api/sales", json={
+                "items": [{"product_id": product["id"], "qty": 1}],
+                "payment_method": "gateway",
+                "customer_first": "نگار", "customer_last": "موسوی", "customer_phone": "09125556677",
+            })
+            self.assertEqual(pending.status_code, 200, pending.get_json())
+            sale = pending.get_json()["sale"]
+            self.assertEqual(sale["pay_url"], "https://gateway.zibal.ir/start/4455")
+            self.assertFalse(any("gateway.zibal.ir/v1" in url for url, _payload in calls))
+            confirmed = self.client.post(f"/api/sales/{sale['id']}/confirm", json={"mode": "verify"})
+            self.assertEqual(confirmed.status_code, 200, confirmed.get_json())
+            self.assertEqual(confirmed.get_json()["sale"]["gateway_ref"], "7788")
+        finally:
+            appmod.http_request = original
 
     def test_variable_woo_product_stays_one_product(self):
         red = {
@@ -1291,7 +1328,7 @@ class DaftarchiTest(unittest.TestCase):
             appmod.http_request = original
 
     def test_installer_overlays_existing_install(self):
-        self.assertEqual(appmod.APP_VERSION, "1.1.5")
+        self.assertEqual(appmod.APP_VERSION, "1.1.6")
         self.assertIn("--app=", Path("/workspace/windows/launcher.py").read_text(encoding="utf-8"))
         bat = Path("/workspace/windows/دفترچی.bat").read_text(encoding="utf-8")
         self.assertIn("pythonw.exe", bat)
@@ -1316,13 +1353,14 @@ class DaftarchiTest(unittest.TestCase):
         self.assertNotIn("MUI_PAGE", run)
         self.assertNotIn('RMDir /r "$INSTDIR\\data"', run)
         self.assertIn("Call LaunchApp", run)
-        self.assertIn("1.1.5", run)
+        self.assertIn("1.1.6", run)
         self.assertIn("invoice-edge", script)
         self.assertIn("نوع متغیر را انتخاب کنید", script)
         self.assertIn("همین مقدارهای نوشته‌شده", script)
         self.assertIn("کادر Consumer key خالی است", script)
         self.assertIn("class=\"webapp\"", script)
         self.assertIn("visibleNav(NAV)", script)
+        self.assertIn('submitSale("gateway"', script)
         self.assertNotIn("data-act=\"more\"", script)
         self.assertIn("data-act=\"commit-import\"", script)
         self.assertIn("نام کالا", script)
@@ -1355,7 +1393,7 @@ class DaftarchiTest(unittest.TestCase):
             boot = self.client.get("/api/auth/bootstrap").get_json()
         finally:
             appmod.http_request = original
-        self.assertEqual(boot["version"], "1.1.5")
+        self.assertEqual(boot["version"], "1.1.6")
         home = self.client.get("/")
         self.assertIn("manifest.webmanifest", home.get_data(as_text=True))
         manifest = json.loads(self.client.get("/manifest.webmanifest").get_data(as_text=True))
@@ -1364,7 +1402,7 @@ class DaftarchiTest(unittest.TestCase):
         self.assertEqual(manifest["name"], "دفترچی")
         worker = self.client.get("/sw.js")
         self.assertEqual(worker.status_code, 200)
-        self.assertIn("daftarchi-1.1.5", worker.get_data(as_text=True))
+        self.assertIn("daftarchi-1.1.6", worker.get_data(as_text=True))
         relay = Path("/workspace/site-updates/daftarchi/telegram.php").read_text(encoding="utf-8")
         self.assertIn("daftarchi-telegram", relay)
         self.assertIn("telegram.json", relay)

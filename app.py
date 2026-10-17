@@ -104,7 +104,7 @@ GATEWAYS = {"zarinpal", "idpay", "zibal"}
 WEBAKERY_URL = "https://webakery.ir"
 SANDBOX_MERCHANT = "00000000-0000-0000-0000-000000000000"
 ZIBAL_LICENSE_MERCHANT = "6a331116da557b902563c32f"
-APP_VERSION = "1.1.5"
+APP_VERSION = "1.1.6"
 TRIAL_DAYS = 7
 UPDATE_MANIFEST_URLS = (
     "https://webakery.ir/daftarchi/version.json",
@@ -1637,6 +1637,20 @@ def gateway_request(settings: dict, sale_id: int, payable: int, phone: str, desc
         if code >= 400 or not isinstance(body, dict) or not body.get("id") or not body.get("link"):
             raise AppError("آی‌دی‌پی درخواست را نپذیرفت", 502)
         return str(body["id"]), body["link"]
+    if gateway == "zibal" and not sandbox:
+        if not callback.startswith("https://"):
+            callback = WEBAKERY_URL
+        body = host_pay("request", {
+            "amount": amount,
+            "callbackUrl": callback,
+            "description": description,
+            "orderId": str(sale_id),
+            "mobile": phone or "",
+        })
+        track = str(body.get("trackId") or "")
+        if not track:
+            raise AppError("هاست شماره پرداخت زیبال را نداد", 502)
+        return track, str(body.get("payUrl") or f"https://gateway.zibal.ir/start/{track}")
     if gateway == "zibal":
         code, body = http_request("POST", "https://gateway.zibal.ir/v1/request", {
             "merchant": zibal_merchant_id(merchant, sandbox),
@@ -1648,9 +1662,6 @@ def gateway_request(settings: dict, sale_id: int, payable: int, phone: str, desc
         })
         if code >= 400 or not isinstance(body, dict) or body.get("result") not in (100, "100") or not body.get("trackId"):
             detail = str(body.get("message") or "").strip() if isinstance(body, dict) else ""
-            if "invalid ip" in detail.lower():
-                ip = detail.split()[-1]
-                raise AppError(f"زیبال مرچنت را شناخت، ولی آی‌پی سرور مجاز نیست: {ip}. این آی‌پی را در پنل زیبال برای مرچنت آزاد کنید.", 502)
             raise AppError(f"زیبال درخواست را نپذیرفت{(': ' + detail) if detail else ''}", 502)
         return str(body["trackId"]), f"https://gateway.zibal.ir/start/{body['trackId']}"
     raise AppError("درگاه ناشناخته است")
@@ -1684,6 +1695,8 @@ def gateway_verify(settings: dict, sale) -> str:
         if code >= 400 or not isinstance(body, dict) or str(body.get("status")) not in {"100", "101", "200"}:
             raise AppError("پرداخت آی‌دی‌پی تأیید نشد", 502)
         return str(body.get("track_id") or ref)
+    if gateway == "zibal" and not sandbox:
+        return host_zibal_verify(ref)
     if gateway == "zibal":
         track = int(ref) if str(ref).isdigit() else ref
         code, body = http_request("POST", "https://gateway.zibal.ir/v1/verify", {
@@ -1728,8 +1741,8 @@ def explain_host_pay(detail: str) -> str:
     if "invalid ip" in low:
         ip = text.replace(":", " ").split()[-1].strip(".,")
         return (
-            f"زیبال مرچنت را شناخت، ولی آی‌پی هاست وب‌بیکری مجاز نیست: {ip}. "
-            "در پنل زیبال همین یک آی‌پی را برای مرچنت آزاد کنید. آی‌پی این رایانه لازم نیست."
+            f"صفحه درگاه در مرورگر باز می‌شود و آی‌پی رایانه‌های فروشگاه به زیبال فرستاده نمی‌شود. "
+            f"زیبال فقط آی‌پی هاست را دیده و نپذیرفته است: {ip}."
         )
     if "404" in low:
         return (

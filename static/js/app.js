@@ -931,7 +931,7 @@ function modalHtml() {
     inner = `<h2 class="section-title">${esc(product.name)}</h2><p class="hint">نوع متغیر را انتخاب کنید. موجودی هر نوع جداست.</p><div class="var-pick">${(product.variations || []).map((item) => `<button type="button" class="btn var-choice" data-act="pick-variation" data-id="${product.id}" data-variation="${item.id}" ${item.in_stock ? "" : "disabled"}><span>${esc(item.label)}</span><span class="num">${item.tracked ? `موجودی ${num(item.stock)}` : (item.in_stock ? "موجود" : "ناموجود")}</span><span class="num">${money(item.price)}</span></button>`).join("")}</div>`;
   }
   if (modal.type === "card") inner = `<h2 class="section-title">کارت‌خوان</h2><p>${esc(modal.message || "")}</p><div class="field"><label>شماره پیگیری رسید</label><input id="pos-ref" class="ltr"></div><button type="button" class="btn primary" data-act="confirm-card">ثبت پرداخت کارت</button>`;
-  if (modal.type === "gateway") inner = `<h2 class="section-title">پرداخت درگاهی</h2><p>فاکتور ${num(modal.sale.id)} · ${money(modal.sale.payable)}</p>${modal.sale.pay_url ? `<p><a href="${esc(modal.sale.pay_url)}" target="_blank" rel="noopener">باز کردن صفحه درگاه</a></p>` : ""}<div class="row-actions"><button type="button" class="btn primary" data-act="verify-sale" data-id="${modal.sale.id}">استعلام تأیید</button><button type="button" class="btn danger" data-act="cancel-sale" data-id="${modal.sale.id}">لغو</button></div><form data-act="manual-gateway"><input type="hidden" name="id" value="${modal.sale.id}"><div class="field"><label>اگر در پنل درگاه پرداخت را دیدید، پیگیری را بنویسید</label><input name="ref" required></div><button class="btn" type="submit">ثبت دستی</button></form>`;
+  if (modal.type === "gateway") inner = `<h2 class="section-title">پرداخت در مرورگر</h2><p>فاکتور ${num(modal.sale.id)} · ${money(modal.sale.payable)}</p><p class="hint">صفحه زیبال در مرورگر باز شده است. آی‌پی این رایانه برای درگاه لازم نیست.</p>${modal.sale.pay_url ? `<p><a href="${esc(modal.sale.pay_url)}" target="_blank" rel="noopener">اگر صفحه باز نشد، اینجا را بزنید</a></p>` : ""}<div class="row-actions"><button type="button" class="btn primary" data-act="verify-sale" data-id="${modal.sale.id}">استعلام تأیید</button><button type="button" class="btn danger" data-act="cancel-sale" data-id="${modal.sale.id}">لغو</button></div><form data-act="manual-gateway"><input type="hidden" name="id" value="${modal.sale.id}"><div class="field"><label>اگر در پنل درگاه پرداخت را دیدید، پیگیری را بنویسید</label><input name="ref" required></div><button class="btn" type="submit">ثبت دستی</button></form>`;
   if (modal.type === "license") {
     const lic = modal.license;
     inner = `<h2 class="section-title">پرداخت لایسنس در زیبال</h2><p>${esc(lic.title)} · ${esc(lic.buyer_name)} · ${money(lic.payable)}</p>${lic.pay_url ? `<p><a href="${esc(lic.pay_url)}" target="_blank" rel="noopener">باز کردن صفحه زیبال</a></p>` : ""}<div class="row-actions"><button type="button" class="btn primary" data-act="verify-license" data-id="${lic.id}">استعلام تأیید</button><button type="button" class="btn danger" data-act="cancel-license" data-id="${lic.id}">لغو</button></div><form data-act="manual-license"><input type="hidden" name="id" value="${lic.id}"><div class="field"><label>اگر در پنل زیبال پرداخت را دیدید، پیگیری را بنویسید</label><input name="ref" required></div><button class="btn" type="submit">ثبت دستی</button></form>`;
@@ -1267,11 +1267,16 @@ function buyerReady() {
   }
   return { first, last, phone };
 }
-async function submitSale(method, posRef) {
+async function submitSale(method, posRef, popup) {
   const buyer = buyerReady();
-  if (!buyer) return;
-  if (!state.cart.length) return toast("سبد خالی است");
-  const result = await api("/api/sales", {
+  if (!buyer || !state.cart.length) {
+    closePopup(popup);
+    if (!buyer) return;
+    return toast("سبد خالی است");
+  }
+  let result;
+  try {
+    result = await api("/api/sales", {
     method: "POST",
     body: {
       items: state.cart.map((line) => ({ product_id: line.id, variation_id: line.variationId || 0, qty: line.qty })),
@@ -1284,10 +1289,18 @@ async function submitSale(method, posRef) {
       pos_ref: posRef || "",
     },
   });
+  } catch (err) {
+    closePopup(popup);
+    throw err;
+  }
   hideToast();
   if (result.sale.status === "pending") {
+    const url = result.sale.pay_url || "";
+    if (url && popup && !popup.closed) popup.location.href = url;
+    else if (url) window.open(url, "_blank", "noopener");
     state.modal = { type: "gateway", sale: result.sale };
   } else {
+    closePopup(popup);
     state.cart = [];
     state.discountValue = "";
     state.buyerFirst = "";
@@ -1340,6 +1353,12 @@ async function onClick(event) {
       state.supportLog = (await api("/api/support/messages")).messages;
       paintChrome();
     });
+    return;
+  }
+  if (act === "pay" && el.dataset.method === "gateway") {
+    if (!buyerReady()) return;
+    const popup = window.open("about:blank", "_blank");
+    await guard(() => submitSale("gateway", "", popup));
     return;
   }
   if (act === "open-import") { state.modal = { type: "import", name: "", preview: null }; render(); return; }
