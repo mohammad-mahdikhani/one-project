@@ -507,36 +507,32 @@ function visibleNav(list) {
 function tabButton([id, title]) {
   return `<button type="button" class="tab" data-act="nav" data-page="${id}">${title}</button>`;
 }
+function brandMark() {
+  const url = shopBrand().logo;
+  if (url) return `<img src="${esc(url)}" alt="">`;
+  return logo();
+}
 function webShell() {
-  const more = visibleNav(MORE);
-  const moreBtn = more.length ? `<button type="button" class="tab" data-act="more">بیشتر</button>` : "";
   return `<div class="webapp" data-user="${state.user.id}">
     <header class="apphead">
       <div class="appbar">
-        <div class="brand"><div class="mark">${logo()}</div><div><strong>دفترچی</strong><span id="who"></span></div></div>
-        <h1 id="page-title"></h1>
+        <div class="brand"><div class="mark">${brandMark()}</div><strong>دفترچی</strong></div>
         <div class="top-actions" id="app-status"></div>
       </div>
-      <nav class="tabbar">${visibleNav(PRIMARY).map(tabButton).join("")}${moreBtn}</nav>
+      <nav class="tabbar" aria-label="بخش‌ها">${visibleNav(NAV).map(tabButton).join("")}</nav>
     </header>
     <div id="banner-host"></div>
     <main class="stage" id="view"></main>
-    <div id="more-host"></div>
     <div id="support-host"></div>
     <div id="modal-host"></div>
   </div>`;
 }
 function paintChrome() {
-  const who = document.getElementById("who");
-  if (who) who.textContent = state.user.name;
-  const title = document.getElementById("page-title");
-  if (title) title.textContent = TITLES[state.page] || "";
+  const mark = document.querySelector(".appbar .mark");
+  if (mark) mark.innerHTML = brandMark();
   document.querySelectorAll(".tab[data-page]").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.page === state.page);
   });
-  const moreBtn = document.querySelector(".tab[data-act=more]");
-  const inMore = visibleNav(MORE).some(([id]) => id === state.page);
-  if (moreBtn) moreBtn.classList.toggle("active", state.more || inMore);
   const open = state.registerInfo?.open;
   const pill = state.registerInfo
     ? `<span class="pill ${open ? "" : "warn"}">${open ? "صندوق باز" : "صندوق بسته"}</span>`
@@ -546,19 +542,13 @@ function paintChrome() {
     ? `<span class="pill ${access.active ? "" : "warn"}">${access.mode === "paid" ? "لایسنس فعال" : access.active ? `${num(access.days_left)} روز رایگان` : "مهلت رایگان تمام شد"}</span>`
     : "";
   const status = document.getElementById("app-status");
-  if (status) status.innerHTML = `${accessPill}${pill}<button type="button" class="btn" data-act="logout">خروج</button>`;
+  if (status) status.innerHTML = `${accessPill}${pill}<button type="button" class="btn" data-act="password-modal">رمز</button><button type="button" class="btn" data-act="logout">خروج</button>`;
   const banner = document.getElementById("banner-host");
   if (banner) {
     banner.innerHTML = [
       state.mustChange ? `<div class="banner">رمز اولیه هنوز فعال است. <button type="button" class="btn" data-act="password-modal">عوضش کنید</button></div>` : "",
       updateBanner(),
     ].join("");
-  }
-  const moreHost = document.getElementById("more-host");
-  if (moreHost) {
-    moreHost.innerHTML = state.more
-      ? `<div class="more-sheet">${visibleNav(MORE).map(([id, label]) => `<button type="button" class="btn ${state.page === id ? "primary" : ""}" data-act="nav" data-page="${id}">${label}</button>`).join("")}<button type="button" class="btn" data-act="password-modal">تغییر رمز</button></div>`
-      : "";
   }
   const modal = document.getElementById("modal-host");
   if (modal) modal.innerHTML = modalHtml();
@@ -1328,7 +1318,6 @@ async function onClick(event) {
     });
     return;
   }
-  if (act === "more") { state.more = !state.more; paintChrome(); return; }
   if (act === "nav") { await guard(() => navigate(el.dataset.page)); return; }
   if (act === "chart") { state.chart = el.dataset.range; render(); return; }
   if (act === "pick-plan") {

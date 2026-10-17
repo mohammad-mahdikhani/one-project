@@ -14,14 +14,14 @@ AutoCloseWindow true
 SetOverwrite on
 Icon "daftarchi.ico"
 
-!define PRODUCT_VERSION "1.1.3"
+!define PRODUCT_VERSION "1.1.4"
 
-VIProductVersion "1.1.3.0"
+VIProductVersion "1.1.4.0"
 VIAddVersionKey /LANG=1033 "ProductName" "Daftarchi"
 VIAddVersionKey /LANG=1033 "CompanyName" "webakery"
 VIAddVersionKey /LANG=1033 "FileDescription" "Daftarchi"
-VIAddVersionKey /LANG=1033 "FileVersion" "1.1.3"
-VIAddVersionKey /LANG=1033 "ProductVersion" "1.1.3"
+VIAddVersionKey /LANG=1033 "FileVersion" "1.1.4"
+VIAddVersionKey /LANG=1033 "ProductVersion" "1.1.4"
 VIAddVersionKey /LANG=1033 "LegalCopyright" "webakery.ir"
 
 Function .onInit

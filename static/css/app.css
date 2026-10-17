@@ -270,49 +270,39 @@ summary { cursor: pointer; font-weight: 600; }
 .webapp { min-height: 100vh; }
 .apphead {
   position: sticky; top: 0; z-index: 7;
-  background: var(--bg);
-}
-.appbar {
-  display: flex; align-items: center; gap: 12px;
-  padding: 10px 16px 4px;
-}
-.appbar .brand { margin: 0; min-width: 0; }
-.appbar h1 { font-size: 18px; margin: 0; white-space: nowrap; }
-.appbar .top-actions { margin-inline-start: auto; }
-.stage { width: min(1100px, 100%); margin: 0 auto; padding: 8px 16px 28px; }
-.tabbar {
-  display: flex; gap: 4px;
-  padding: 6px 10px 8px;
   background: var(--paper);
   border-bottom: 1px solid var(--line);
 }
+.appbar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px 0;
+}
+.appbar .brand { margin: 0; min-width: 0; gap: 8px; }
+.appbar .mark { width: 28px; height: 28px; border-radius: 8px; overflow: hidden; }
+.appbar .mark svg { width: 16px; height: 16px; }
+.appbar .mark img { width: 100%; height: 100%; object-fit: cover; }
+.appbar .brand strong { font-size: 15px; font-weight: 600; }
+.appbar .top-actions { margin-inline-start: auto; }
+.appbar .top-actions .btn { padding: 4px 10px; }
+.stage { width: min(1100px, 100%); margin: 0 auto; padding: 12px 16px 28px; }
+.tabbar {
+  display: flex; justify-content: flex-start; gap: 2px;
+  padding: 4px 12px 8px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabbar::-webkit-scrollbar { display: none; }
 .tab {
-  flex: 1; border: 0; background: transparent; color: var(--muted);
-  border-radius: 12px; padding: 8px 6px; font-size: 14px;
+  flex: 0 0 auto; border: 0; background: transparent; color: var(--muted);
+  border-radius: 999px; padding: 5px 10px; font-size: 13px; white-space: nowrap;
 }
 .tab.active { background: var(--soft); color: var(--accent-ink); font-weight: 600; }
-.more-sheet {
-  position: fixed; z-index: 9;
-  top: 108px; inset-inline-end: 16px; inset-inline-start: auto;
-  width: min(420px, calc(100% - 32px));
-  display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
-  background: var(--paper); border: 1px solid var(--line);
-  border-radius: 16px; box-shadow: var(--shadow); padding: 12px;
-}
 .banner { margin: 8px 16px 0; }
 
 @media (max-width: 860px) {
-  .tabbar {
-    position: fixed; bottom: 0; left: 0; right: 0; top: auto; z-index: 8;
-    border-bottom: 0; border-top: 1px solid var(--line);
-    padding-bottom: calc(8px + env(safe-area-inset-bottom));
-  }
-  .stage { padding-bottom: 96px; }
-  .more-sheet { top: auto; bottom: 72px; inset-inline-start: 12px; width: auto; }
-  .appbar { flex-wrap: wrap; row-gap: 8px; }
-  .appbar h1 { font-size: 16px; }
-  .appbar .top-actions { flex: 1 0 100%; margin-inline-start: 0; }
-  #toast { bottom: 78px; }
+  .appbar { padding-inline: 12px; }
+  .tabbar { padding-inline: 8px; }
+  .stage { padding-bottom: 88px; }
 }
 @media (max-width: 980px) {
   .stats, .plans, .split, .pos, .grid-2 { grid-template-columns: 1fr; }
@@ -352,9 +342,9 @@ summary { cursor: pointer; font-weight: 600; }
 .bubble p { margin: 0; }
 .update-stats { grid-template-columns: 1fr 1fr; }
 @media (max-width: 860px) {
-  .dock { bottom: calc(74px + env(safe-area-inset-bottom)); }
-  .support-sheet { bottom: calc(128px + env(safe-area-inset-bottom)); inset-inline-start: 12px; width: auto; inset-inline-end: 12px; }
-  #toast { bottom: calc(132px + env(safe-area-inset-bottom)); }
+  .dock { bottom: calc(16px + env(safe-area-inset-bottom)); }
+  .support-sheet { bottom: calc(68px + env(safe-area-inset-bottom)); inset-inline-start: 12px; width: auto; inset-inline-end: 12px; }
+  #toast { bottom: calc(72px + env(safe-area-inset-bottom)); }
 }
 
 @media print {
