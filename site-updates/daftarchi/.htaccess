@@ -1,6 +1,14 @@
 RewriteEngine Off
 DirectoryIndex index.php mail.php
 Options -Indexes
+<FilesMatch "\.(tmp|lock)$">
+  <IfModule mod_authz_core.c>
+    Require all denied
+  </IfModule>
+  <IfModule !mod_authz_core.c>
+    Deny from all
+  </IfModule>
+</FilesMatch>
 <Files "accounts.json">
   <IfModule mod_authz_core.c>
     Require all denied

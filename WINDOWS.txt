@@ -22,7 +22,13 @@ Rename کنید به:
 
 نقطه بین اسم و پسوند واجب است.
 
-بعد index.php و .htaccess را هم از همان زیپ در public_html/daftarchi بگذارید.
+releases.php و پوشه releases را از همان زیپ کنار mail.php بگذارید، یعنی در public_html/license-server.
+فایل نسخه جدید اپ داخل license-server/releases می‌رود.
+
+دفترچی فایل version.json را می‌خواند. اگر عددش از برنامه مشتری بالاتر باشد، نوار به‌روزرسانی و ویژگی‌های تازه را نشان می‌دهد.
+برای گذاشتن نسخه جدید این صفحه را باز کنید:
+
+  https://webakery.ir/license-server/releases.php
 
 اگر این آدرس نوشت ok و daftarchi-mail، درست است:
 https://webakery.ir/daftarchi/mail.php

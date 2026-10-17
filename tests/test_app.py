@@ -1318,6 +1318,34 @@ class DaftarchiTest(unittest.TestCase):
             self.assertTrue(body["available"])
             self.assertEqual(body["url"], "https://webakery.ir/daftarchi/Daftarchi-Setup.exe")
             self.assertEqual(body["notes"], "رفع ورود")
+            self.assertEqual(body["features"], [])
+            self.assertEqual(body["plugins"], [])
+
+            def rich(method, url, payload=None, headers=None, form=None, timeout=12):
+                return 200, {
+                    "version": "1.3.0",
+                    "url": "https://webakery.ir/daftarchi/releases/Daftarchi-1.3.0.exe",
+                    "notes": "صندوق سریع‌تر شد",
+                    "features": ["چاپ فاکتور", "  ", "اتصال پلاگین"],
+                    "plugins": [
+                        {
+                            "id": "sms",
+                            "name": "پیامک",
+                            "version": "1.0.0",
+                            "url": "https://webakery.ir/daftarchi/releases/sms-1.0.0.zip",
+                            "notes": "کاوه‌نگار",
+                            "features": ["ارسال مانده"],
+                        },
+                        {"id": "bad", "name": "بد", "version": "1", "url": "http://evil.example/x.zip"},
+                    ],
+                }
+
+            appmod.http_request = rich
+            rich_body = self.client.get("/api/update").get_json()
+            self.assertEqual(rich_body["features"], ["چاپ فاکتور", "اتصال پلاگین"])
+            self.assertEqual(len(rich_body["plugins"]), 1)
+            self.assertEqual(rich_body["plugins"][0]["name"], "پیامک")
+            self.assertEqual(rich_body["plugins"][0]["features"], ["ارسال مانده"])
             appmod.http_request = current
             same = self.client.get("/api/update").get_json()
             self.assertFalse(same["update"])
@@ -1416,6 +1444,22 @@ class DaftarchiTest(unittest.TestCase):
         self.assertIn("accounts.json", accounts)
         self.assertNotIn("password", accounts)
         self.assertIn("gateway.zibal.ir/v1/request", pay)
+        releases = Path("/workspace/site-updates/daftarchi/releases.php").read_text(encoding="utf-8")
+        self.assertIn("daftarchi-releases", releases)
+        self.assertIn("version.json", releases)
+        self.assertIn("Daftarchi-", releases)
+        self.assertIn("hash_equals", releases)
+        self.assertIn(".exe", releases)
+        self.assertIn(".zip", releases)
+        manifest = json.loads(Path("/workspace/site-updates/daftarchi/version.json").read_text(encoding="utf-8"))
+        self.assertEqual(manifest["version"], "1.1.6")
+        self.assertTrue(manifest["url"].startswith("https://webakery.ir/license-server/releases/"))
+        self.assertNotIn("githubusercontent", manifest["url"])
+        self.assertGreaterEqual(len(manifest["features"]), 1)
+        self.assertEqual(manifest["plugins"], [])
+        script = Path("/workspace/static/js/app.js").read_text(encoding="utf-8")
+        self.assertIn("feature-list", script)
+        self.assertIn("دانلود پلاگین", script)
         self.assertTrue(boot["host_mail"])
 
     def test_moadian_sends_encrypted_invoice_without_touching_books(self):

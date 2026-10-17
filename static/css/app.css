@@ -298,6 +298,8 @@ summary { cursor: pointer; font-weight: 600; }
 }
 .tab.active { background: var(--soft); color: var(--accent-ink); font-weight: 600; }
 .banner { margin: 8px 16px 0; }
+.feature-list { margin: 8px 0 0; padding-inline-start: 18px; }
+.feature-list li { margin: 2px 0; }
 
 @media (max-width: 860px) {
   .appbar { padding-inline: 12px; }

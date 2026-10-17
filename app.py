@@ -1471,6 +1471,45 @@ def version_tuple(value: str) -> tuple[int, ...]:
     return tuple(parts) or (0,)
 
 
+def manifest_lines(value, limit: int = 8, width: int = 160) -> list[str]:
+    rows = value.splitlines() if isinstance(value, str) else value if isinstance(value, list) else []
+    lines = []
+    for row in rows:
+        text = str(row or "").strip()
+        if not text:
+            continue
+        lines.append(text[:width])
+        if len(lines) == limit:
+            break
+    return lines
+
+
+def manifest_plugins(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    plugins = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()[:60]
+        version = str(item.get("version") or "").strip()[:20]
+        url = str(item.get("url") or "").strip()
+        plugin_id = str(item.get("id") or "").strip()[:40]
+        if not name or not version or not url.startswith("https://") or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,30}", plugin_id):
+            continue
+        plugins.append({
+            "id": plugin_id,
+            "name": name,
+            "version": version,
+            "url": url,
+            "notes": str(item.get("notes") or "").strip()[:300],
+            "features": manifest_lines(item.get("features"), 6, 120),
+        })
+        if len(plugins) == 12:
+            break
+    return plugins
+
+
 def notify_buyer(sale: dict) -> dict:
     phone = norm_phone(sale.get("customer_phone") or "")
     if not re.fullmatch(r"09\d{9}", phone):
@@ -2382,6 +2421,8 @@ def update_info():
         "version": "",
         "url": "",
         "notes": "",
+        "features": [],
+        "plugins": [],
         "manifest": UPDATE_MANIFEST_URL,
     }
     status, body, manifest = 404, None, UPDATE_MANIFEST_URL
@@ -2400,7 +2441,7 @@ def update_info():
         return jsonify(quiet)
     latest = str(body.get("version") or "").strip()
     url = str(body.get("url") or "").strip()
-    notes = str(body.get("notes") or "").strip()[:300]
+    notes = str(body.get("notes") or "").strip()[:500]
     if not latest or not url.startswith("https://"):
         return jsonify(quiet)
     return jsonify(
@@ -2410,6 +2451,8 @@ def update_info():
         version=latest,
         url=url,
         notes=notes,
+        features=manifest_lines(body.get("features")),
+        plugins=manifest_plugins(body.get("plugins")),
         manifest=manifest,
     )
 
